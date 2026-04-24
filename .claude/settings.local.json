@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:classes.usc.edu)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:joeljoseph.space)",
+      "WebFetch(domain:web-app.usc.edu)",
+      "WebFetch(domain:www.trojans360.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python -c 'import ast, sys *)",
+      "Bash(python -c ' *)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:apify.com)",
+      "WebFetch(domain:www.getodata.com)"
+    ]
+  }
+}

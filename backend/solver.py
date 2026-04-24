@@ -49,7 +49,7 @@ class Section:
     start_time: str             # "HH:MM" 24h
     end_time: str               # "HH:MM" 24h
     location: str
-    units: int
+    units: float
     modality: str               # "in_person" | "online" | "hybrid"
     seats_available: int
     total_seats: int
@@ -406,21 +406,6 @@ def needs_discussion_prompt(sections: list[Section], constraints: Constraints) -
     _, prompt = expand_to_pairs(sections, constraints, preferred_time=None)
     return prompt
 
-"""
-solver.py — Trojan Scheduler
-Part 2: Conflict detection + backtracking engine
-
-Depends on Part 1 types:
-  Section, LinkedSection, SectionPair, CourseInput, Constraints
-"""
-
-from __future__ import annotations
-from typing import Optional
-from solver_part1 import (
-    Section, LinkedSection, SectionPair, CourseInput, Constraints,
-    _to_minutes, expand_to_pairs, filter_and_pin_sections
-)
-
 
 # ---------------------------------------------------------------------------
 # 3. CONFLICT DETECTION
@@ -584,7 +569,6 @@ def _diagnose_over_constrained(
         )
 
     # Check time window
-    from solver_part1 import _section_in_time_window
     time_ok = [s for s in modality_ok if _section_in_time_window(s, constraints)]
     if not time_ok:
         return (
@@ -856,17 +840,6 @@ def inject_nice_to_haves(
 
     return schedule
 
-"""
-solver.py — Trojan Scheduler
-Part 3: Scoring engine
-
-Depends on Part 1 types:
-  SectionPair, ScoringWeights
-"""
-
-from __future__ import annotations
-from solver_part1 import SectionPair, ScoringWeights, _to_minutes
-
 
 # ---------------------------------------------------------------------------
 # 7. INDIVIDUAL SCORE COMPONENTS
@@ -1108,30 +1081,6 @@ def compute_schedule_metadata(schedule: list[SectionPair]) -> dict:
         "gap_minutes": total_gap,
         "seat_colors": seat_colors,
     }
-"""
-solver.py — Trojan Scheduler
-Part 4: build_schedules() — top-level orchestrator
-
-Ties together:
-  Part 1 — Types + Pre-processing
-  Part 2 — Conflict detection + Backtracking
-  Part 3 — Scoring
-"""
-
-from __future__ import annotations
-from typing import Optional
-from dataclasses import asdict
-
-from solver_part1 import (
-    Section, SectionPair, CourseInput, Constraints, ScoringWeights,
-)
-from solver_part2 import (
-    resolve_must_haves, auto_select_ge, inject_nice_to_haves, SolverResult,
-)
-from solver_part3 import (
-    score_schedule, compute_schedule_metadata,
-)
-
 
 # ---------------------------------------------------------------------------
 # 10. SCHEDULE SERIALIZATION
