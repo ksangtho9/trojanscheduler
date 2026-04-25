@@ -1,5 +1,3 @@
-// Single-page app — manages state transitions:
-// "form" -> "loading" -> "results" (image selection) -> "detail" (post-selection)
 "use client"
 
 import { useState } from "react"
@@ -9,14 +7,12 @@ import ScheduleImageCard from "@/components/ScheduleImageCard"
 import ScheduleDetail from "@/components/ScheduleDetail"
 import {
   AppStage,
-  DiscussionSectionOption,
-  DiscussionSectionPref,
+  DiscussionOption,
   GenerateRequest,
   GenerateResponse,
   Schedule,
   SwapState,
 } from "@/lib/types"
-
 
 export default function Home() {
   const [stage, setStage] = useState<AppStage>("form")
@@ -24,7 +20,8 @@ export default function Home() {
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
   const [swapState, setSwapState] = useState<SwapState>({})
   const [error, setError] = useState<string | null>(null)
-  const [discussionPromptCourse, setDiscussionPromptCourse] = useState<{ course_code: string; options: DiscussionSectionOption[] } | null>(null)
+  const [discussionPromptCourse, setDiscussionPromptCourse] = useState<string | null>(null)
+  const [discussionOptions, setDiscussionOptions] = useState<DiscussionOption[]>([])
   const [pendingPayload, setPendingPayload] = useState<GenerateRequest | null>(null)
 
   const callGenerate = async (payload: GenerateRequest) => {
@@ -43,9 +40,9 @@ export default function Home() {
       )
       const data: GenerateResponse = await res.json()
 
-      // Backend needs discussion time preference before solving
       if (data.needs_discussion_prompt) {
         setDiscussionPromptCourse(data.needs_discussion_prompt)
+        setDiscussionOptions(data.discussion_options ?? [])
         setPendingPayload(payload)
         setStage("form")
         return
@@ -71,11 +68,11 @@ export default function Home() {
     callGenerate(payload)
   }
 
-  const handleDiscussionPreference = (pref: Record<string, DiscussionSectionPref>) => {
+  const handleDiscussionPreference = (pref: Record<string, string>) => {
     if (!pendingPayload) return
     const updated: GenerateRequest = {
       ...pendingPayload,
-      discussion_preferences: pref,
+      discussion_preferences: pref as Record<string, string>,
     }
     setDiscussionPromptCourse(null)
     callGenerate(updated)
@@ -105,84 +102,126 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080808] text-white">
+    <div className="min-h-screen" style={{ backgroundColor: "var(--bg-page)" }}>
 
-      {/* Nav */}
-      <nav className="sticky top-0 z-50 border-b border-white/[0.06] bg-[#080808]/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-5 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-[#990000] flex items-center justify-center shadow-lg shadow-[#990000]/30">
-              <span className="text-white font-black text-xs">TS</span>
-            </div>
-            <span className="font-semibold tracking-tight">Trojan Scheduler</span>
+      {/* ── Top bar — cardinal red like webreg ── */}
+      <div style={{ backgroundColor: "var(--cardinal)" }} className="px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded flex items-center justify-center font-bold text-sm"
+            style={{ backgroundColor: "var(--cardinal-dark)", color: "var(--gold)" }}
+          >
+            TS
           </div>
-          <span className="text-white/25 text-xs font-mono tracking-wider">
-            USC · FALL 2025
+          <span className="text-white font-semibold text-lg tracking-tight"
+            style={{ fontFamily: "'DM Serif Display', serif" }}>
+            Trojan Scheduler
           </span>
         </div>
-      </nav>
-
-      {/* Stage: Form */}
-      {stage === "form" && (
-        <InputForm
-          onSubmit={handleSubmit}
-          error={error}
-          discussionPromptCourse={discussionPromptCourse}
-          onDiscussionPreference={handleDiscussionPreference}
-        />
-      )}
-
-      {/* Stage: Loading */}
-      {stage === "loading" && <LoadingScreen />}
-
-      {/* Stage: Results + Detail */}
-      {(stage === "results" || stage === "detail") && response && (
-        <div className="max-w-7xl mx-auto px-5 py-10">
-
-          {/* Section header */}
-          <div className="mb-8">
-            <p className="text-[#990000] text-xs font-mono tracking-widest uppercase mb-1">
-              {stage === "results" ? "Step 3 of 3" : "Selected"}
-            </p>
-            <h2 className="text-2xl font-bold tracking-tight">
-              {stage === "results" ? "Your Top 3 Schedules" : "Schedule Selected"}
-            </h2>
-            <p className="text-white/35 text-sm mt-1">
-              {stage === "results"
-                ? "Compare your options and select one to view full details."
-                : "Scroll down to view details, swap GE courses, or export."}
-            </p>
-          </div>
-
-          {/* Image cards — always visible in both results and detail stages */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
-            {response.schedules.map((sched) => (
-              <ScheduleImageCard
-                key={sched.rank}
-                schedule={sched}
-                label={["A", "B", "C"][sched.rank - 1]}
-                isSelected={selectedSchedule?.rank === sched.rank}
-                dimmed={stage === "detail" && selectedSchedule?.rank !== sched.rank}
-                onSelect={handleSelect}
-              />
-            ))}
-          </div>
-
-          {/* Detail section — appears after selection */}
-          {stage === "detail" && selectedSchedule && (
-            <div id="detail-section">
-              <ScheduleDetail
-                schedule={selectedSchedule}
-                swapState={swapState}
-                onSwap={(originalId, replacement) =>
-                  setSwapState((prev) => ({ ...prev, [originalId]: replacement }))
-                }
-                onStartOver={handleStartOver}
-              />
-            </div>
+        <div className="flex items-center gap-6">
+          <span className="text-white/70 text-sm hidden md:block">
+            USC · Fall 2025
+          </span>
+          {(stage === "results" || stage === "detail") && (
+            <button
+              onClick={handleStartOver}
+              className="text-white/80 hover:text-white text-sm transition-colors underline underline-offset-2"
+            >
+              Start Over
+            </button>
           )}
         </div>
-      )}
+      </div>
+
+      {/* ── Secondary nav bar — dark red like webreg ── */}
+      <div style={{ backgroundColor: "var(--cardinal-dark)" }} className="px-6 py-2 flex items-center gap-1">
+        <div
+          className="px-4 py-1.5 rounded text-sm font-medium"
+          style={{ backgroundColor: "var(--cardinal)", color: "var(--gold)" }}
+        >
+          Schedule Builder
+        </div>
+        {(stage === "results" || stage === "detail") && (
+          <>
+            <div className="px-4 py-1.5 text-sm text-white/50">
+              Results
+            </div>
+            {stage === "detail" && (
+              <div className="px-4 py-1.5 text-sm text-white/50">
+                Detail View
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Main content ── */}
+      <main>
+        {stage === "form" && (
+          <InputForm
+            onSubmit={handleSubmit}
+            error={error}
+            discussionPromptCourse={discussionPromptCourse}
+            discussionOptions={discussionOptions}
+            onDiscussionPreference={handleDiscussionPreference}
+          />
+        )}
+
+        {stage === "loading" && <LoadingScreen />}
+
+        {(stage === "results" || stage === "detail") && response && (
+          <div className="max-w-7xl mx-auto px-6 py-8">
+
+            {/* Page title */}
+            <div className="mb-6 pb-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+              <h2 style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)" }}
+                className="text-2xl mb-1">
+                {stage === "results" ? "Your Top 3 Schedules" : "Schedule Selected"}
+              </h2>
+              <p style={{ color: "var(--text-tertiary)" }} className="text-sm">
+                {stage === "results"
+                  ? "Compare your options below and select one to view full details."
+                  : "Scroll down to view details, swap GE courses, or export to calendar."}
+              </p>
+            </div>
+
+            {/* Schedule image cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
+              {response.schedules.map((sched) => (
+                <ScheduleImageCard
+                  key={sched.rank}
+                  schedule={sched}
+                  label={["A", "B", "C"][sched.rank - 1]}
+                  isSelected={selectedSchedule?.rank === sched.rank}
+                  dimmed={stage === "detail" && selectedSchedule?.rank !== sched.rank}
+                  onSelect={handleSelect}
+                />
+              ))}
+            </div>
+
+            {/* Detail section */}
+            {stage === "detail" && selectedSchedule && (
+              <div id="detail-section">
+                <ScheduleDetail
+                  schedule={selectedSchedule}
+                  swapState={swapState}
+                  onSwap={(originalId, replacement) =>
+                    setSwapState((prev) => ({ ...prev, [originalId]: replacement }))
+                  }
+                  onStartOver={handleStartOver}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* ── Footer ── */}
+      <footer className="mt-16 py-6 text-center" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+        <p style={{ color: "var(--text-tertiary)" }} className="text-xs">
+          Trojan Scheduler · Built for USC students · Not affiliated with USC
+        </p>
+      </footer>
     </div>
   )
 }
