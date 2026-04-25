@@ -15,6 +15,7 @@ import {
   SwapState,
 } from "@/lib/types"
 
+
 export default function Home() {
   const [stage, setStage] = useState<AppStage>("form")
   const [response, setResponse] = useState<GenerateResponse | null>(null)
@@ -72,7 +73,7 @@ export default function Home() {
     if (!pendingPayload) return
     const updated: GenerateRequest = {
       ...pendingPayload,
-      discussion_preferences: pref,
+      discussion_preferences: pref as Record<string, DiscussionTimePref>,
     }
     setDiscussionPromptCourse(null)
     callGenerate(updated)
