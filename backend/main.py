@@ -187,7 +187,7 @@ async def generate(req: GenerateRequest):
     await enrich_with_rmp(combined, http_client)
 
     # 6. Run solver
-    return build_schedules(
+    result = build_schedules(
         must_have_inputs=must_have_courses,
         ge_inputs=ge_inputs,
         nice_to_have_inputs=nice_to_haves,
@@ -197,3 +197,13 @@ async def generate(req: GenerateRequest):
         prof_slider=req.prof_slider,
         convenience_slider=req.convenience_slider,
     )
+
+    # 7. Render schedule images
+    schedules = result.get("schedules", [])
+    if schedules:
+        from image_gen import generate_schedule_images
+        images = await generate_schedule_images(schedules)
+        for schedule, img in zip(schedules, images):
+            schedule["image_base64"] = img
+
+    return result
