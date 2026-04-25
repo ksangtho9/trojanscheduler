@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,11 +75,16 @@ async def generate(req: GenerateRequest):
 
     clear_dept_cache()
 
-    # 1. Scrape sections for all course inputs (deduplicated by code)
-    scraped: dict[str, list] = {}
-    for entry in req.must_haves + req.nice_to_haves:
-        if entry.type == "course" and entry.code and entry.code not in scraped:
-            scraped[entry.code] = await scrape_course(entry.code, http_client, school_lookup)
+    # 1. Scrape sections for all course inputs in parallel (deduplicated by code)
+    codes = list({
+        entry.code
+        for entry in req.must_haves + req.nice_to_haves
+        if entry.type == "course" and entry.code
+    })
+    results = await asyncio.gather(*[
+        scrape_course(code, http_client, school_lookup) for code in codes
+    ])
+    scraped: dict[str, list] = dict(zip(codes, results))
 
     # 2. Convert scraper dicts → solver Section dataclasses
     def _to_sections(course_code: str, raw: list) -> list[Section]:

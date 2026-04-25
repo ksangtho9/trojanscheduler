@@ -12,8 +12,9 @@ Color rules (from spec):
   - Linked section:    70% darkened version of parent color
 """
 
+import asyncio
 import base64
-from playwright.async_api import async_playwright
+from playwright.sync_api import sync_playwright
 
 # ── Canvas constants ──────────────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ html, body {{
   letter-spacing:.09em; text-transform:uppercase;
 }}
 .tl {{
-  position:absolute; right:6px;
+  position:absolute; left:4px;
   font-size:9px; color:rgba(255,255,255,0.18);
   transform:translateY(-50%); white-space:nowrap;
 }}
@@ -221,22 +222,23 @@ def _build_html(schedule: dict) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def generate_schedule_images(schedules: list[dict]) -> list[str]:
-    """
-    Render up to 3 schedules as base64 PNG strings.
-    Returns a list in the same order as the input.
-    """
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": W, "height": H})
-
+def _render_sync(schedules: list[dict]) -> list[str]:
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": W, "height": H})
         images = []
         for schedule in schedules[:3]:
             html = _build_html(schedule)
-            await page.set_content(html, wait_until="domcontentloaded")
-            png = await page.screenshot(type="png", clip={"x": 0, "y": 0, "width": W, "height": H})
+            page.set_content(html, wait_until="domcontentloaded")
+            png = page.screenshot(type="png", clip={"x": 0, "y": 0, "width": W, "height": H})
             images.append(base64.b64encode(png).decode())
-
-        await browser.close()
-
+        browser.close()
     return images
+
+
+async def generate_schedule_images(schedules: list[dict]) -> list[str]:
+    """
+    Render up to 3 schedules as base64 PNG strings.
+    Runs sync Playwright in a thread to avoid Windows asyncio subprocess limitations.
+    """
+    return await asyncio.to_thread(_render_sync, schedules)
