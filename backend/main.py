@@ -10,9 +10,12 @@ from scraper import build_school_lookup, clear_dept_cache, HTTP_HEADERS
 # --- Pydantic models ---
 
 class CourseInput(BaseModel):
-    type: str          # "course" | "ge"
+    type: str                           # "course" | "ge"
     code: str | None = None
     category: str | None = None
+    categories: list[str] | None = None # multi-GE double-count hunting
+    professor: str | None = None        # optional professor pin
+    section_id: str | None = None       # optional exact section pin
 
 class Constraints(BaseModel):
     earliest_start: str
@@ -28,6 +31,7 @@ class GenerateRequest(BaseModel):
     constraints: Constraints
     prof_slider: float = 0.5
     convenience_slider: float = 0.5
+    discussion_preferences: dict[str, str] | None = None  # course_code -> "morning"|"afternoon"|"evening"
 
 # --- App state ---
 
@@ -113,17 +117,41 @@ async def generate(req: GenerateRequest):
 
     all_sections = {code: _to_sections(code, raw) for code, raw in scraped.items()}
 
+    def _to_sections_with_ge(raw: list) -> list[Section]:
+        """Convert ge_finder section dicts (which include course_code) to Section objects."""
+        result = []
+        for s in raw:
+            result.extend(_to_sections(s["course_code"], [s]))
+        return result
+
     # 3. Build solver inputs from request
+    disc_prefs = req.discussion_preferences or {}
+
     must_have_courses = [
-        SolverCourseInput(input_type=e.type, code=e.code)
+        SolverCourseInput(
+            input_type=e.type,
+            code=e.code,
+            professor=e.professor,
+            section_id=e.section_id,
+            preferred_discussion_time=disc_prefs.get(e.code) if e.code else None,
+        )
         for e in req.must_haves if e.type == "course"
     ]
     ge_inputs = [
-        SolverCourseInput(input_type=e.type, category=e.category)
+        SolverCourseInput(
+            input_type=e.type,
+            category=e.category,
+            categories=e.categories,
+        )
         for e in req.must_haves + req.nice_to_haves if e.type == "ge"
     ]
     nice_to_haves = [
-        SolverCourseInput(input_type=e.type, code=e.code)
+        SolverCourseInput(
+            input_type=e.type,
+            code=e.code,
+            professor=e.professor,
+            section_id=e.section_id,
+        )
         for e in req.nice_to_haves if e.type == "course"
     ]
     solver_constraints = SolverConstraints(
@@ -135,13 +163,36 @@ async def generate(req: GenerateRequest):
         modality=req.constraints.modality,
     )
 
-    # 4. Run solver (ge_finder and rmp.py wired in later steps)
+    # 4. Fetch GE candidate sections
+    from ge_finder import build_ge_candidates
+    requested_categories: list[str] = []
+    for e in req.must_haves + req.nice_to_haves:
+        if e.type == "ge":
+            if e.category:
+                requested_categories.append(e.category)
+            if e.categories:
+                requested_categories.extend(e.categories)
+    requested_categories = list(set(requested_categories))
+    raw_ge = await build_ge_candidates(requested_categories, school_lookup, http_client)
+
+    ge_candidates = {
+        slot: _to_sections_with_ge(sections)
+        for slot, sections in raw_ge.items()
+    }
+
+    # 5. Enrich all sections with RMP data
+    from rmp import enrich_with_rmp
+    combined = dict(all_sections)
+    combined.update({slot: secs for slot, secs in ge_candidates.items()})
+    await enrich_with_rmp(combined, http_client)
+
+    # 6. Run solver
     return build_schedules(
         must_have_inputs=must_have_courses,
         ge_inputs=ge_inputs,
         nice_to_have_inputs=nice_to_haves,
         all_sections=all_sections,
-        ge_candidates={},           # TODO: wire in ge_finder.py
+        ge_candidates=ge_candidates,
         constraints=solver_constraints,
         prof_slider=req.prof_slider,
         convenience_slider=req.convenience_slider,

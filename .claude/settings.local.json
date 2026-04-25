@@ -12,7 +12,10 @@
       "Bash(python -c ' *)",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:apify.com)",
-      "WebFetch(domain:www.getodata.com)"
+      "WebFetch(domain:www.getodata.com)",
+      "Bash(python3 *)",
+      "Bash(python -c \"import base64; print\\(base64.b64encode\\(b'School-1059'\\).decode\\(\\)\\)\")",
+      "Bash(python -)"
     ]
   }
 }

@@ -162,6 +162,26 @@ async def scrape_course(
     return extract_sections(course)
 
 
+async def fetch_dept_courses(
+    dept: str,
+    school: str,
+    client: httpx.AsyncClient,
+) -> list:
+    """
+    Fetch all courses for a department, using the per-request cache.
+    Ge_finder calls this to scan departments without double-fetching.
+    """
+    cache_key = f"{school}:{dept}"
+    if cache_key not in _dept_cache:
+        r = await client.get(
+            f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
+            params={"termCode": TERM_CODE, "school": school, "program": dept},
+        )
+        r.raise_for_status()
+        _dept_cache[cache_key] = r.json().get("courses") or []
+    return _dept_cache[cache_key]
+
+
 def clear_dept_cache() -> None:
     """Call at the start of each /generate request to reset per-request cache."""
     _dept_cache.clear()
