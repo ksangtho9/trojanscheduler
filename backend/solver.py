@@ -136,8 +136,8 @@ class CourseInput:
     categories: Optional[list[str]] = None # e.g. ["C","D"] — for multi-GE mode
 
     # Set by solver after pre-processing — which linked section the
-    # user prefers (if they were prompted for discussion time preference)
-    preferred_discussion_time: Optional[str] = None  # "morning"|"afternoon"|"evening"|None
+    # user prefers (if they were prompted for discussion selection)
+    preferred_discussion_section_id: Optional[str] = None  # section_id of chosen linked section
 
 
 @dataclass
@@ -339,71 +339,78 @@ def filter_and_pin_sections(
 def expand_to_pairs(
     sections: list[Section],
     constraints: Constraints,
-    preferred_time: Optional[str] = None,
-) -> tuple[list[SectionPair], bool]:
+    preferred_section_id: Optional[str] = None,
+) -> tuple[list[SectionPair], bool, list]:
     """
     Expand a list of lecture sections into (lecture, linked) pairs.
 
     If a lecture has no linked sections → pair with None.
     If a lecture has linked sections:
-      - Filter linked sections by time window, days off, and seats > 0
-      - If preferred_time is set, prefer that time bucket but don't exclude others
-      - Each valid lecture × valid linked combination becomes one pair
+      - display_linked: all passing time window + day off filters (includes full sections)
+      - eligible: display_linked with seats > 0 — used for actual pairing
+      - If preferred_section_id is set, pin to that specific section (bypasses seats check)
+      - Each valid lecture × eligible linked becomes one pair
 
     Returns:
-      (pairs, needs_discussion_prompt)
-      needs_discussion_prompt = True if any lecture has 2+ discussions
-      spanning different time buckets AND no preference was given yet.
+      (pairs, needs_discussion_prompt, display_options)
+      needs_discussion_prompt = True if eligible has 2+ distinct (days, start_time) slots
+        and no preference was given yet.
+      display_options = all display_linked sections (including full) — for frontend UI
     """
     pairs: list[SectionPair] = []
     needs_prompt = False
+    display_options: list = []
 
     for section in sections:
         if not section.linked_sections:
             pairs.append(SectionPair(lecture=section, linked=None))
             continue
 
-        # Filter linked sections
-        valid_linked = [
+        # All linked sections passing time/day filters (include full for display)
+        display_linked = [
             ls for ls in section.linked_sections
-            if ls.seats_available > 0
-            and _linked_in_time_window(ls, constraints)
+            if _linked_in_time_window(ls, constraints)
             and _no_day_off_conflict(ls.days, constraints)
         ]
 
-        if not valid_linked:
-            # This lecture has no viable linked section — skip the whole pair
+        # Eligible for enrollment
+        eligible = [ls for ls in display_linked if ls.seats_available > 0]
+
+        if not eligible:
             continue
 
-        # Check if we need to prompt (2+ distinct time buckets, no preference yet)
-        buckets = set(_discussion_time_bucket(ls) for ls in valid_linked)
-        if len(buckets) >= 2 and preferred_time is None:
-            needs_prompt = True
-
-        # Sort by preference if given, otherwise by seats descending
-        if preferred_time:
-            valid_linked.sort(
-                key=lambda ls: (
-                    0 if _discussion_time_bucket(ls) == preferred_time else 1,
-                    -ls.seats_available,
-                )
+        if preferred_section_id:
+            # Pin to the user's chosen section (may be full — respect their choice)
+            chosen = next(
+                (ls for ls in display_linked if ls.section_id == preferred_section_id),
+                None,
             )
+            if chosen:
+                pairs.append(SectionPair(lecture=section, linked=chosen))
+            else:
+                # Chosen section not found among valid options — fall back
+                for linked in sorted(eligible, key=lambda ls: -ls.seats_available):
+                    pairs.append(SectionPair(lecture=section, linked=linked))
         else:
-            valid_linked.sort(key=lambda ls: -ls.seats_available)
+            # Check if we need to prompt: 2+ eligible sections with distinct time slots
+            distinct_slots = {(tuple(ls.days), ls.start_time) for ls in eligible}
+            if len(distinct_slots) >= 2:
+                needs_prompt = True
+                display_options.extend(display_linked)
 
-        for linked in valid_linked:
-            pairs.append(SectionPair(lecture=section, linked=linked))
+            for linked in sorted(eligible, key=lambda ls: -ls.seats_available):
+                pairs.append(SectionPair(lecture=section, linked=linked))
 
-    return pairs, needs_prompt
+    return pairs, needs_prompt, display_options
 
 
 def needs_discussion_prompt(sections: list[Section], constraints: Constraints) -> bool:
     """
-    Quick check: should we ask the user for a discussion time preference
+    Quick check: should we ask the user for a discussion section preference
     before running the full solver?
-    Returns True if any lecture has 2+ valid linked sections in different time buckets.
+    Returns True if any lecture has 2+ eligible linked sections in distinct time slots.
     """
-    _, prompt = expand_to_pairs(sections, constraints, preferred_time=None)
+    _, prompt, _ = expand_to_pairs(sections, constraints, preferred_section_id=None)
     return prompt
 
 
@@ -515,6 +522,7 @@ class SolverResult:
         self.combinations: list[list[SectionPair]] = []
         self.errors: list[str] = []             # per-course error messages
         self.conflict_pairs: list[tuple[str, str]] = []  # (courseA, courseB) hard conflicts
+        self.discussion_options: dict[str, list] = {}   # course_code → display linked sections
 
 
 def _find_conflicting_pair(
@@ -685,10 +693,10 @@ def resolve_must_haves(
             continue
 
         # Expand to pairs
-        pairs, needs_prompt = expand_to_pairs(
+        pairs, needs_prompt, options = expand_to_pairs(
             filtered,
             constraints,
-            preferred_time=course_input.preferred_discussion_time,
+            preferred_section_id=course_input.preferred_discussion_section_id,
         )
 
         if not pairs:
@@ -699,8 +707,9 @@ def resolve_must_haves(
 
         # Flag that a discussion prompt is needed before solving
         # The API layer handles this by returning early and asking the frontend
-        if needs_prompt and course_input.preferred_discussion_time is None:
+        if needs_prompt and course_input.preferred_discussion_section_id is None:
             result.errors.append(f"NEEDS_DISCUSSION_PROMPT:{course_code}")
+            result.discussion_options[course_code] = options
             continue
 
         groups.append(pairs)
@@ -763,7 +772,7 @@ def auto_select_ge(
         return None, [], f"No valid courses found for {ge_slot}."
 
     # Expand to pairs
-    pairs, _ = expand_to_pairs(filtered, constraints)
+    pairs, _, _ = expand_to_pairs(filtered, constraints)
     if not pairs:
         return None, [], f"No valid courses found for {ge_slot}."
 
@@ -824,7 +833,7 @@ def inject_nice_to_haves(
         if not filtered:
             continue
 
-        pairs, _ = expand_to_pairs(filtered, constraints, course_input.preferred_discussion_time)
+        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_discussion_section_id)
         if not pairs:
             continue
 
@@ -1271,10 +1280,27 @@ def build_schedules(
     )
     if prompt_error:
         course_code = prompt_error.split(":")[1]
+        raw_options = solver_result.discussion_options.get(course_code, [])
+        options = [
+            {
+                "section_id": ls.section_id,
+                "section_type": ls.section_type,
+                "days": ls.days,
+                "start_time": ls.start_time,
+                "end_time": ls.end_time,
+                "seats_available": ls.seats_available,
+                "total_seats": ls.total_seats,
+                "location": ls.location,
+            }
+            for ls in raw_options
+        ]
         return {
             "schedules": [],
             "error": None,
-            "needs_discussion_prompt": course_code,
+            "needs_discussion_prompt": {
+                "course_code": course_code,
+                "options": options,
+            },
         }
 
     # Handle hard errors

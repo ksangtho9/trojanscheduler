@@ -9,6 +9,8 @@ import ScheduleImageCard from "@/components/ScheduleImageCard"
 import ScheduleDetail from "@/components/ScheduleDetail"
 import {
   AppStage,
+  DiscussionSectionOption,
+  DiscussionSectionPref,
   GenerateRequest,
   GenerateResponse,
   Schedule,
@@ -22,7 +24,7 @@ export default function Home() {
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
   const [swapState, setSwapState] = useState<SwapState>({})
   const [error, setError] = useState<string | null>(null)
-  const [discussionPromptCourse, setDiscussionPromptCourse] = useState<string | null>(null)
+  const [discussionPromptCourse, setDiscussionPromptCourse] = useState<{ course_code: string; options: DiscussionSectionOption[] } | null>(null)
   const [pendingPayload, setPendingPayload] = useState<GenerateRequest | null>(null)
 
   const callGenerate = async (payload: GenerateRequest) => {
@@ -69,11 +71,11 @@ export default function Home() {
     callGenerate(payload)
   }
 
-  const handleDiscussionPreference = (pref: Record<string, string>) => {
+  const handleDiscussionPreference = (pref: Record<string, DiscussionSectionPref>) => {
     if (!pendingPayload) return
     const updated: GenerateRequest = {
       ...pendingPayload,
-      discussion_preferences: pref as Record<string, DiscussionTimePref>,
+      discussion_preferences: pref,
     }
     setDiscussionPromptCourse(null)
     callGenerate(updated)

@@ -5,11 +5,12 @@
 // "Build My Schedule" CTA — cardinal #990000
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   Constraints,
   CourseInputEntry,
-  DiscussionTimePref,
+  DiscussionSectionOption,
+  DiscussionSectionPref,
   GenerateRequest,
   Modality,
 } from "@/lib/types"
@@ -31,8 +32,8 @@ interface Entry {
 interface Props {
   onSubmit: (payload: GenerateRequest) => void
   error: string | null
-  discussionPromptCourse: string | null
-  onDiscussionPreference: (pref: Record<string, string>) => void
+  discussionPromptCourse: { course_code: string; options: DiscussionSectionOption[] } | null
+  onDiscussionPreference: (pref: Record<string, DiscussionSectionPref>) => void
 }
 
 let _id = 0
@@ -67,7 +68,11 @@ export default function InputForm({
   const [constraints, setConstraints] = useState<Constraints>(DEFAULT_CONSTRAINTS)
   const [profSlider, setProfSlider] = useState(0.5)
   const [convSlider, setConvSlider] = useState(0.5)
-  const [discussionPref, setDiscussionPref] = useState<DiscussionTimePref>("morning")
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSelectedSectionId(null)
+  }, [discussionPromptCourse])
 
   // ── entry helpers ──────────────────────────────────────────────────────────
 
@@ -128,48 +133,89 @@ export default function InputForm({
   }
 
   const handleDiscussionSubmit = () => {
-    if (!discussionPromptCourse) return
-    onDiscussionPreference({ [discussionPromptCourse]: discussionPref })
+    if (!discussionPromptCourse || !selectedSectionId) return
+    const selected = discussionPromptCourse.options.find(
+      (o) => o.section_id === selectedSectionId
+    )
+    if (!selected) return
+    onDiscussionPreference({
+      [discussionPromptCourse.course_code]: {
+        section_id: selected.section_id,
+        start_time: selected.start_time,
+        end_time: selected.end_time,
+        days: selected.days,
+      },
+    })
   }
 
   // ── discussion prompt screen ───────────────────────────────────────────────
 
   if (discussionPromptCourse) {
     return (
-      <div className="max-w-md mx-auto px-5 py-20 text-center">
+      <div className="max-w-md mx-auto px-5 py-16">
         <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-8">
           <div className="w-12 h-12 rounded-xl bg-[#990000]/20 border border-[#990000]/30 flex items-center justify-center mx-auto mb-4">
             <span className="text-2xl">🗓</span>
           </div>
-          <h3 className="text-white font-bold text-lg mb-2">
-            Discussion Time Preference
+          <h3 className="text-white font-bold text-lg mb-1 text-center">
+            Pick a Discussion Section
           </h3>
-          <p className="text-white/40 text-sm mb-6">
-            <span className="text-white/70 font-medium">{discussionPromptCourse}</span>{" "}
-            has discussions available in multiple time slots. When do you prefer?
+          <p className="text-white/40 text-sm mb-6 text-center">
+            <span className="text-white/70 font-medium">{discussionPromptCourse.course_code}</span>{" "}
+            has multiple discussion sections. Pick one.
           </p>
           <div className="flex flex-col gap-2 mb-6">
-            {(["morning", "afternoon", "evening"] as DiscussionTimePref[]).map((pref) => (
-              <button
-                key={pref}
-                onClick={() => setDiscussionPref(pref)}
-                className={`w-full py-3 rounded-xl text-sm font-medium border transition-all ${
-                  discussionPref === pref
-                    ? "bg-[#990000] border-[#990000] text-white"
-                    : "bg-white/5 border-white/10 text-white/60 hover:border-white/25"
-                }`}
-              >
-                {pref === "morning"
-                  ? "☀️  Morning (before noon)"
-                  : pref === "afternoon"
-                  ? "🌤  Afternoon (noon – 5pm)"
-                  : "🌙  Evening (after 5pm)"}
-              </button>
-            ))}
+            {discussionPromptCourse.options.map((opt) => {
+              const full = opt.seats_available === 0
+              const tight = !full && opt.seats_available <= 5
+              const seatColor = full
+                ? "text-red-400"
+                : tight
+                ? "text-yellow-400"
+                : "text-green-400"
+              const borderColor = full
+                ? "border-red-500/40"
+                : tight
+                ? "border-yellow-500/40"
+                : "border-white/10"
+              const selected = selectedSectionId === opt.section_id
+              return (
+                <button
+                  key={opt.section_id}
+                  onClick={() => setSelectedSectionId(opt.section_id)}
+                  className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${
+                    selected
+                      ? "bg-[#990000]/20 border-[#990000] "
+                      : `bg-white/[0.03] ${borderColor} hover:border-white/25`
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-white text-sm font-semibold">
+                        {opt.days.join(" / ")}{" "}
+                        <span className="font-normal text-white/60">
+                          {fmt12(opt.start_time)} – {fmt12(opt.end_time)}
+                        </span>
+                      </div>
+                      <div className="text-white/35 text-xs mt-0.5 truncate">
+                        {opt.section_type.charAt(0).toUpperCase() + opt.section_type.slice(1)}{" "}
+                        · {opt.location || "TBA"}
+                      </div>
+                    </div>
+                    <div className={`text-xs font-semibold shrink-0 ${seatColor}`}>
+                      {full
+                        ? "Full"
+                        : `${opt.seats_available}/${opt.total_seats}`}
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
           </div>
           <button
             onClick={handleDiscussionSubmit}
-            className="w-full bg-[#990000] hover:bg-[#b30000] text-white font-semibold py-3 rounded-xl transition-colors"
+            disabled={!selectedSectionId}
+            className="w-full bg-[#990000] hover:bg-[#b30000] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors"
           >
             Continue Building Schedule
           </button>
@@ -589,6 +635,13 @@ function AddButton({ onClick }: { onClick: () => void }) {
       <span className="text-base leading-none">+</span> Add entry
     </button>
   )
+}
+
+function fmt12(t: string): string {
+  const [h, m] = t.split(":").map(Number)
+  const ampm = h >= 12 ? "PM" : "AM"
+  const h12 = h % 12 || 12
+  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`
 }
 
 function SliderRow({

@@ -7,7 +7,23 @@ export type EntryType = "course" | "ge"
 
 export type SectionType = "lecture" | "seminar" | "discussion" | "lab" | "quiz" | "online"
 
-export type DiscussionTimePref = "morning" | "afternoon" | "evening"
+export interface DiscussionSectionOption {
+  section_id: string
+  section_type: string
+  days: string[]
+  start_time: string              // "HH:MM" 24h
+  end_time: string                // "HH:MM" 24h
+  seats_available: number
+  total_seats: number
+  location: string
+}
+
+export interface DiscussionSectionPref {
+  section_id: string
+  start_time: string
+  end_time: string
+  days: string[]
+}
 
 // ---------------------------------------------------------------------------
 // Input types — what the frontend sends to POST /generate
@@ -38,7 +54,7 @@ export interface GenerateRequest {
   prof_slider: number             // 0–1
   convenience_slider: number      // 0–1
   // Sent on second attempt if needs_discussion_prompt was returned
-  discussion_preferences?: Record<string, DiscussionTimePref>
+  discussion_preferences?: Record<string, DiscussionSectionPref>
 }
 
 // ---------------------------------------------------------------------------
@@ -143,8 +159,7 @@ export interface Schedule {
 export interface GenerateResponse {
   schedules: Schedule[]
   error: string | null            // set when no valid schedule could be built
-  needs_discussion_prompt: string | null  // course code that needs time preference
-                                          // frontend re-submits with discussion_preferences
+  needs_discussion_prompt: { course_code: string; options: DiscussionSectionOption[] } | null
 }
 
 // ---------------------------------------------------------------------------
