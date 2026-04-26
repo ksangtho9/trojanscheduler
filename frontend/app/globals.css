@@ -170,6 +170,203 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 1px 4px rgba(153, 0, 0, 0.30);
 }
 
+/* Form step: main config card (no hover lift) */
+.form-main-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+/* Step 1 compact: denser inputs inside the card */
+.form-step-compact .form-main-card input[type="text"]:not(.form-add-input),
+.form-step-compact .form-main-card select {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+/* Constraint sliders — cardinal fill track, white thumb with red ring */
+input[type="range"].form-constraint-range {
+  --fill-percent: 50%;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--cardinal) 0%,
+    var(--cardinal) var(--fill-percent),
+    #E0E0E0 var(--fill-percent),
+    #E0E0E0 100%
+  );
+}
+
+input[type="range"].form-constraint-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  background: #ffffff;
+  border: 2px solid var(--cardinal);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+input[type="range"].form-constraint-range::-webkit-slider-thumb:hover {
+  box-shadow: 0 2px 6px rgba(153, 0, 0, 0.22);
+}
+
+input[type="range"].form-constraint-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #ffffff;
+  border: 2px solid var(--cardinal);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+input[type="range"].form-constraint-range::-moz-range-progress {
+  background: var(--cardinal);
+  height: 4px;
+  border-radius: 2px 0 0 2px;
+}
+
+/* Dual-handle time range (earliest / latest) */
+.dual-range-labels {
+  position: relative;
+  z-index: 2;
+  min-height: 1.375rem;
+  padding-bottom: 2px;
+  margin-bottom: 14px;
+}
+
+.dual-range-label {
+  transform: translateX(-50%);
+  top: 0;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+.dual-range-track {
+  position: relative;
+  z-index: 1;
+}
+
+/* Pills (course tags) */
+.form-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 3px 3px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.form-pill:hover {
+  border-color: var(--border-default);
+}
+
+.form-pill.is-active {
+  border-color: rgba(153, 0, 0, 0.35);
+  background: rgba(153, 0, 0, 0.04);
+}
+
+.form-pill-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+}
+
+.form-pill-remove:hover {
+  background: rgba(153, 0, 0, 0.1);
+  color: var(--cardinal);
+}
+
+/* Unified add row */
+.form-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow-input);
+}
+
+.form-add-row:focus-within {
+  border-color: var(--cardinal);
+  box-shadow: 0 0 0 3px rgba(153, 0, 0, 0.08);
+}
+
+.form-add-row input.form-add-input {
+  flex: 1;
+  border: none;
+  box-shadow: none;
+  padding: 2px 0;
+  border-radius: 0;
+  min-width: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.form-add-row input.form-add-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Toggle row (hard constraints) */
+.form-toggle-box {
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+}
+
+/* Disclosure (fine-tune rankings) */
+.form-disclosure-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.form-disclosure-btn:hover {
+  color: var(--cardinal);
+}
+
+.form-disclosure-chevron {
+  transition: transform 0.2s ease;
+  color: var(--text-tertiary);
+}
+
+.form-disclosure-chevron.is-open {
+  transform: rotate(180deg);
+}
+
 /* ── Utility classes ───────────────────────────────────────────────────────── */
 
 /* Cards */

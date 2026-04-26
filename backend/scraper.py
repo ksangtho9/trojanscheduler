@@ -91,7 +91,7 @@ def extract_sections(course: dict) -> list[dict]:
     # Group open sections by linkCode
     link_groups: dict[str, list] = {}
     for sec in raw_sections:
-        if sec.get("isCancelled") or sec.get("isFull"):
+        if sec.get("isCancelled"):
             continue
         link_code = sec.get("linkCode") or "NONE"
         link_groups.setdefault(link_code, []).append(sec)

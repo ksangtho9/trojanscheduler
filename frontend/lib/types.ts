@@ -13,6 +13,7 @@ export interface DiscussionOption {
   start_time: string
   end_time: string
   seats_available: number
+  total_seats: number
   location: string
 }
 

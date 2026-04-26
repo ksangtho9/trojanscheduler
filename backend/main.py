@@ -32,7 +32,7 @@ class GenerateRequest(BaseModel):
     constraints: Constraints
     prof_slider: float = 0.5
     convenience_slider: float = 0.5
-    discussion_preferences: dict[str, dict] | None = None  # course_code -> {section_id, start_time, end_time, days}
+    discussion_preferences: dict[str, str] | None = None  # course_code -> section_id
 
 # --- App state ---
 
@@ -139,10 +139,7 @@ async def generate(req: GenerateRequest):
             code=e.code,
             professor=e.professor,
             section_id=e.section_id,
-            preferred_discussion_section_id=(
-                (disc_prefs.get(e.code) or {}).get("section_id")
-                if e.code else None
-            ),
+            preferred_discussion_section_id=disc_prefs.get(e.code) if e.code else None,
         )
         for e in req.must_haves if e.type == "course"
     ]

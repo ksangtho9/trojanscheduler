@@ -72,7 +72,10 @@ export default function Home() {
     if (!pendingPayload) return
     const updated: GenerateRequest = {
       ...pendingPayload,
-      discussion_preferences: pref as Record<string, string>,
+      discussion_preferences: {
+        ...(pendingPayload.discussion_preferences ?? {}),
+        ...pref,
+      },
     }
     setDiscussionPromptCourse(null)
     callGenerate(updated)
@@ -101,59 +104,65 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
+  const showWebRegHeader = stage !== "form"
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--bg-page)" }}>
 
-      {/* ── Top bar — cardinal red like webreg ── */}
-      <div style={{ backgroundColor: "var(--cardinal)" }} className="px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-8 h-8 rounded flex items-center justify-center font-bold text-sm"
-            style={{ backgroundColor: "var(--cardinal-dark)", color: "var(--gold)" }}
-          >
-            TS
-          </div>
-          <span className="text-white font-semibold text-lg tracking-tight"
-            style={{ fontFamily: "'DM Serif Display', serif" }}>
-            Trojan Scheduler
-          </span>
-        </div>
-        <div className="flex items-center gap-6">
-          <span className="text-white/70 text-sm hidden md:block">
-            USC · Fall 2025
-          </span>
-          {(stage === "results" || stage === "detail") && (
-            <button
-              onClick={handleStartOver}
-              className="text-white/80 hover:text-white text-sm transition-colors underline underline-offset-2"
-            >
-              Start Over
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Secondary nav bar — dark red like webreg ── */}
-      <div style={{ backgroundColor: "var(--cardinal-dark)" }} className="px-6 py-2 flex items-center gap-1">
-        <div
-          className="px-4 py-1.5 rounded text-sm font-medium"
-          style={{ backgroundColor: "var(--cardinal)", color: "var(--gold)" }}
-        >
-          Schedule Builder
-        </div>
-        {(stage === "results" || stage === "detail") && (
-          <>
-            <div className="px-4 py-1.5 text-sm text-white/50">
-              Results
-            </div>
-            {stage === "detail" && (
-              <div className="px-4 py-1.5 text-sm text-white/50">
-                Detail View
+      {showWebRegHeader && (
+        <>
+          {/* ── Top bar — cardinal red like webreg ── */}
+          <div style={{ backgroundColor: "var(--cardinal)" }} className="px-6 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-8 h-8 rounded flex items-center justify-center font-bold text-sm"
+                style={{ backgroundColor: "var(--cardinal-dark)", color: "var(--gold)" }}
+              >
+                TS
               </div>
+              <span className="text-white font-semibold text-lg tracking-tight"
+                style={{ fontFamily: "'DM Serif Display', serif" }}>
+                Trojan Scheduler
+              </span>
+            </div>
+            <div className="flex items-center gap-6">
+              <span className="text-white/70 text-sm hidden md:block">
+                USC · Fall 2025
+              </span>
+              {(stage === "results" || stage === "detail") && (
+                <button
+                  onClick={handleStartOver}
+                  className="text-white/80 hover:text-white text-sm transition-colors underline underline-offset-2"
+                >
+                  Start Over
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ── Secondary nav bar — dark red like webreg ── */}
+          <div style={{ backgroundColor: "var(--cardinal-dark)" }} className="px-6 py-2 flex items-center gap-1">
+            <div
+              className="px-4 py-1.5 rounded text-sm font-medium"
+              style={{ backgroundColor: "var(--cardinal)", color: "var(--gold)" }}
+            >
+              Schedule Builder
+            </div>
+            {(stage === "results" || stage === "detail") && (
+              <>
+                <div className="px-4 py-1.5 text-sm text-white/50">
+                  Results
+                </div>
+                {stage === "detail" && (
+                  <div className="px-4 py-1.5 text-sm text-white/50">
+                    Detail View
+                  </div>
+                )}
+              </>
             )}
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
 
       {/* ── Main content ── */}
       <main>
@@ -216,12 +225,14 @@ export default function Home() {
         )}
       </main>
 
-      {/* ── Footer ── */}
-      <footer className="mt-16 py-6 text-center" style={{ borderTop: "1px solid var(--border-subtle)" }}>
-        <p style={{ color: "var(--text-tertiary)" }} className="text-xs">
-          Trojan Scheduler · Built for USC students · Not affiliated with USC
-        </p>
-      </footer>
+      {/* ── Footer (hidden on step 1 form to keep layout in one viewport) ── */}
+      {stage !== "form" && (
+        <footer className="mt-16 py-6 text-center" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+          <p style={{ color: "var(--text-tertiary)" }} className="text-xs">
+            Trojan Scheduler · Built for USC students · Not affiliated with USC
+          </p>
+        </footer>
+      )}
     </div>
   )
 }

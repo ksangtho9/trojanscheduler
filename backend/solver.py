@@ -396,7 +396,11 @@ def expand_to_pairs(
             distinct_slots = {(tuple(ls.days), ls.start_time) for ls in eligible}
             if len(distinct_slots) >= 2:
                 needs_prompt = True
-                display_options.extend(display_linked)
+                seen_ids = {ls.section_id for ls in display_options}
+                for ls in display_linked:
+                    if ls.section_id not in seen_ids:
+                        display_options.append(ls)
+                        seen_ids.add(ls.section_id)
 
             for linked in sorted(eligible, key=lambda ls: -ls.seats_available):
                 pairs.append(SectionPair(lecture=section, linked=linked))
@@ -1284,7 +1288,6 @@ def build_schedules(
         options = [
             {
                 "section_id": ls.section_id,
-                "section_type": ls.section_type,
                 "days": ls.days,
                 "start_time": ls.start_time,
                 "end_time": ls.end_time,
@@ -1297,10 +1300,8 @@ def build_schedules(
         return {
             "schedules": [],
             "error": None,
-            "needs_discussion_prompt": {
-                "course_code": course_code,
-                "options": options,
-            },
+            "needs_discussion_prompt": course_code,
+            "discussion_options": options,
         }
 
     # Handle hard errors
@@ -1309,6 +1310,7 @@ def build_schedules(
             "schedules": [],
             "error": " | ".join(solver_result.errors),
             "needs_discussion_prompt": None,
+            "discussion_options": [],
         }
 
     if not solver_result.combinations:
@@ -1316,6 +1318,7 @@ def build_schedules(
             "schedules": [],
             "error": "No valid schedule could be built. Try relaxing your constraints.",
             "needs_discussion_prompt": None,
+            "discussion_options": [],
         }
 
     # --- Step 3: GE selection + nice-to-haves + scoring ---
@@ -1395,6 +1398,7 @@ def build_schedules(
                 "Try broader GE categories or relax your time constraints."
             ),
             "needs_discussion_prompt": None,
+            "discussion_options": [],
         }
 
     top = _deduplicate(scored, top_n)
