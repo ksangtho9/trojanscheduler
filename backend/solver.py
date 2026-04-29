@@ -11,6 +11,7 @@ Sections:
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+from itertools import product as _cart_product
 from typing import Optional
 
 
@@ -77,13 +78,13 @@ class Section:
 @dataclass
 class SectionPair:
     """
-    An atomic unit for backtracking: one lecture + one linked section.
-    If a course has no linked sections, linked is None.
-    The solver treats each SectionPair as indivisible —
-    both blocks are placed or neither is.
+    An atomic unit for backtracking: one lecture + one required linked section
+    per type (discussion, lab, quiz, etc.).
+    linked_sections is empty if the course has no linked requirements.
+    The solver treats each SectionPair as indivisible.
     """
     lecture: Section
-    linked: Optional[LinkedSection]     # None if course has no discussion/lab
+    linked_sections: list[LinkedSection] = field(default_factory=list)
 
     @property
     def course(self) -> str:
@@ -91,31 +92,25 @@ class SectionPair:
 
     @property
     def all_days(self) -> list[str]:
-        """All days occupied by this pair."""
         days = list(self.lecture.days)
-        if self.linked:
-            days += self.linked.days
+        for ls in self.linked_sections:
+            days += ls.days
         return days
 
     @property
     def seats_available(self) -> int:
-        """Bottleneck seat count — min of lecture and linked section."""
-        if self.linked:
-            return min(self.lecture.seats_available, self.linked.seats_available)
-        return self.lecture.seats_available
+        """Bottleneck seat count — min across lecture and all linked sections."""
+        if not self.linked_sections:
+            return self.lecture.seats_available
+        return min(self.lecture.seats_available, *(ls.seats_available for ls in self.linked_sections))
 
     @property
     def total_seats(self) -> int:
-        if self.linked:
-            return min(self.lecture.total_seats, self.linked.total_seats)
-        return self.lecture.total_seats
+        if not self.linked_sections:
+            return self.lecture.total_seats
+        return min(self.lecture.total_seats, *(ls.total_seats for ls in self.linked_sections))
 
     def seat_fill_ratio(self) -> float:
-        """
-        0.0 = empty, 1.0 = completely full.
-        Used to drive the seat color gradient in the frontend.
-        Formula: (total - available) / total
-        """
         if self.total_seats == 0:
             return 1.0
         filled = self.total_seats - self.seats_available
@@ -342,20 +337,19 @@ def expand_to_pairs(
     preferred_section_id: Optional[str] = None,
 ) -> tuple[list[SectionPair], bool, list]:
     """
-    Expand a list of lecture sections into (lecture, linked) pairs.
+    Expand lecture sections into SectionPairs, where each pair bundles one
+    lecture with one required linked section per type (e.g. one discussion
+    AND one lab). Uses cartesian product across type groups so every valid
+    (lecture × discussion × lab × ...) combination is represented.
 
-    If a lecture has no linked sections → pair with None.
-    If a lecture has linked sections:
-      - display_linked: all passing time window + day off filters (includes full sections)
-      - eligible: display_linked with seats > 0 — used for actual pairing
-      - If preferred_section_id is set, pin to that specific section (bypasses seats check)
-      - Each valid lecture × eligible linked becomes one pair
+    - No linked sections → SectionPair with empty linked_sections list.
+    - If preferred_section_id is set, the matching type group is pinned to
+      that section; other types still enumerate all eligible options.
+    - Discussion prompt fires when the "discussion" type has 2+ distinct time
+      slots and no preferred_section_id was given.
 
     Returns:
       (pairs, needs_discussion_prompt, display_options)
-      needs_discussion_prompt = True if eligible has 2+ distinct (days, start_time) slots
-        and no preference was given yet.
-      display_options = all display_linked sections (including full) — for frontend UI
     """
     pairs: list[SectionPair] = []
     needs_prompt = False
@@ -363,47 +357,58 @@ def expand_to_pairs(
 
     for section in sections:
         if not section.linked_sections:
-            pairs.append(SectionPair(lecture=section, linked=None))
+            pairs.append(SectionPair(lecture=section))
             continue
 
-        # All linked sections passing time/day filters (include full for display)
-        display_linked = [
-            ls for ls in section.linked_sections
-            if _linked_in_time_window(ls, constraints)
-            and _no_day_off_conflict(ls.days, constraints)
-        ]
+        # Group by normalized type (e.g. "Discussion" → "discussion")
+        by_type: dict[str, list[LinkedSection]] = {}
+        for ls in section.linked_sections:
+            by_type.setdefault(ls.section_type.lower(), []).append(ls)
 
-        # Eligible for enrollment
-        eligible = [ls for ls in display_linked if ls.seats_available > 0]
+        # Filter each type by time window + days off (keep full sections for display)
+        display_by_type: dict[str, list[LinkedSection]] = {
+            stype: [
+                ls for ls in group
+                if _linked_in_time_window(ls, constraints)
+                and _no_day_off_conflict(ls.days, constraints)
+            ]
+            for stype, group in by_type.items()
+        }
 
-        if not eligible:
+        # Eligible = filtered + has seats
+        eligible_by_type: dict[str, list[LinkedSection]] = {
+            stype: [ls for ls in display if ls.seats_available > 0]
+            for stype, display in display_by_type.items()
+        }
+
+        # If any required type has no eligible sections, this lecture is unschedulable
+        if any(len(g) == 0 for g in eligible_by_type.values()):
             continue
 
+        # Pin preferred_section_id to whichever type group it belongs to
         if preferred_section_id:
-            # Pin to the user's chosen section (may be full — respect their choice)
-            chosen = next(
-                (ls for ls in display_linked if ls.section_id == preferred_section_id),
-                None,
-            )
-            if chosen:
-                pairs.append(SectionPair(lecture=section, linked=chosen))
-            else:
-                # Chosen section not found among valid options — fall back
-                for linked in sorted(eligible, key=lambda ls: -ls.seats_available):
-                    pairs.append(SectionPair(lecture=section, linked=linked))
-        else:
-            # Check if we need to prompt: 2+ eligible sections with distinct time slots
-            distinct_slots = {(tuple(ls.days), ls.start_time) for ls in eligible}
+            for stype, display in display_by_type.items():
+                chosen = next((ls for ls in display if ls.section_id == preferred_section_id), None)
+                if chosen:
+                    eligible_by_type[stype] = [chosen]
+                    break
+
+        # Discussion prompt: 2+ distinct time slots and no preference given yet
+        disc_eligible = eligible_by_type.get("discussion", [])
+        if disc_eligible and not preferred_section_id:
+            distinct_slots = {(tuple(ls.days), ls.start_time) for ls in disc_eligible}
             if len(distinct_slots) >= 2:
                 needs_prompt = True
                 seen_ids = {ls.section_id for ls in display_options}
-                for ls in display_linked:
+                for ls in display_by_type.get("discussion", []):
                     if ls.section_id not in seen_ids:
                         display_options.append(ls)
                         seen_ids.add(ls.section_id)
 
-            for linked in sorted(eligible, key=lambda ls: -ls.seats_available):
-                pairs.append(SectionPair(lecture=section, linked=linked))
+        # Cartesian product across all type groups → one SectionPair per combo
+        type_groups = list(eligible_by_type.values())
+        for combo in _cart_product(*type_groups):
+            pairs.append(SectionPair(lecture=section, linked_sections=list(combo)))
 
     return pairs, needs_prompt, display_options
 
@@ -456,53 +461,25 @@ def pair_conflicts_with_pair(
 ) -> bool:
     """
     Full conflict check between two SectionPairs.
-    Checks all 4 combinations:
-      lecture_a vs lecture_b
-      lecture_a vs linked_b
-      linked_a  vs lecture_b
-      linked_a  vs linked_b
-
+    Checks every block in a against every block in b (lecture + all linked sections).
     Online lectures never conflict on time with anything.
     """
-    # Online sections don't conflict on time
     a_online = a.lecture.modality == "online"
     b_online = b.lecture.modality == "online"
 
-    # lecture_a vs lecture_b
-    if not (a_online and b_online):
-        if _blocks_conflict(
-            a.lecture.days, a.lecture.start_time, a.lecture.end_time,
-            b.lecture.days, b.lecture.start_time, b.lecture.end_time,
-            buffer_mins,
-        ):
-            return True
+    # (days, start, end, is_online)
+    a_blocks = [(a.lecture.days, a.lecture.start_time, a.lecture.end_time, a_online)]
+    a_blocks += [(ls.days, ls.start_time, ls.end_time, False) for ls in a.linked_sections]
 
-    # lecture_a vs linked_b
-    if b.linked and not a_online:
-        if _blocks_conflict(
-            a.lecture.days, a.lecture.start_time, a.lecture.end_time,
-            b.linked.days, b.linked.start_time, b.linked.end_time,
-            buffer_mins,
-        ):
-            return True
+    b_blocks = [(b.lecture.days, b.lecture.start_time, b.lecture.end_time, b_online)]
+    b_blocks += [(ls.days, ls.start_time, ls.end_time, False) for ls in b.linked_sections]
 
-    # linked_a vs lecture_b
-    if a.linked and not b_online:
-        if _blocks_conflict(
-            a.linked.days, a.linked.start_time, a.linked.end_time,
-            b.lecture.days, b.lecture.start_time, b.lecture.end_time,
-            buffer_mins,
-        ):
-            return True
-
-    # linked_a vs linked_b
-    if a.linked and b.linked:
-        if _blocks_conflict(
-            a.linked.days, a.linked.start_time, a.linked.end_time,
-            b.linked.days, b.linked.start_time, b.linked.end_time,
-            buffer_mins,
-        ):
-            return True
+    for days_a, start_a, end_a, online_a in a_blocks:
+        for days_b, start_b, end_b, online_b in b_blocks:
+            if online_a and online_b:
+                continue
+            if _blocks_conflict(days_a, start_a, end_a, days_b, start_b, end_b, buffer_mins):
+                return True
 
     return False
 
@@ -887,8 +864,8 @@ def _score_compactness(schedule: list[SectionPair]) -> float:
     for pair in schedule:
         if pair.lecture.modality != "online":
             days_on_campus.update(pair.lecture.days)
-        if pair.linked and pair.linked.days:
-            days_on_campus.update(pair.linked.days)
+        for ls in pair.linked_sections:
+            days_on_campus.update(ls.days)
 
     return 1.0 - (len(days_on_campus) / 5.0)
 
@@ -911,18 +888,16 @@ def _score_gaps(schedule: list[SectionPair]) -> float:
     day_blocks: dict[str, list[tuple[int, int]]] = {}  # day -> [(start_min, end_min)]
 
     for pair in schedule:
-        # Lecture block
         for day in pair.lecture.days:
             day_blocks.setdefault(day, []).append((
                 _to_minutes(pair.lecture.start_time),
                 _to_minutes(pair.lecture.end_time),
             ))
-        # Linked section block
-        if pair.linked:
-            for day in pair.linked.days:
+        for ls in pair.linked_sections:
+            for day in ls.days:
                 day_blocks.setdefault(day, []).append((
-                    _to_minutes(pair.linked.start_time),
-                    _to_minutes(pair.linked.end_time),
+                    _to_minutes(ls.start_time),
+                    _to_minutes(ls.end_time),
                 ))
 
     total_gap = 0
@@ -1052,8 +1027,8 @@ def compute_schedule_metadata(schedule: list[SectionPair]) -> dict:
     days_on: set[str] = set()
     for pair in schedule:
         days_on.update(pair.lecture.days)
-        if pair.linked:
-            days_on.update(pair.linked.days)
+        for ls in pair.linked_sections:
+            days_on.update(ls.days)
     days_with_class = [d for d in DAY_ORDER if d in days_on]
 
     # Average RMP
@@ -1068,11 +1043,11 @@ def compute_schedule_metadata(schedule: list[SectionPair]) -> dict:
                 _to_minutes(pair.lecture.start_time),
                 _to_minutes(pair.lecture.end_time),
             ))
-        if pair.linked:
-            for day in pair.linked.days:
+        for ls in pair.linked_sections:
+            for day in ls.days:
                 day_blocks.setdefault(day, []).append((
-                    _to_minutes(pair.linked.start_time),
-                    _to_minutes(pair.linked.end_time),
+                    _to_minutes(ls.start_time),
+                    _to_minutes(ls.end_time),
                 ))
 
     total_gap = 0
@@ -1150,7 +1125,7 @@ def _serialize_pair(pair: SectionPair, seat_color: str) -> dict:
         "entry_type": lec.entry_type,
         "ge_slot": lec.ge_slot,
         "runner_ups": _serialize_runner_ups(lec.runner_ups),
-        "linked_section": _serialize_linked(pair.linked),
+        "linked_sections": [_serialize_linked(ls) for ls in pair.linked_sections],
     }
 
 
@@ -1171,7 +1146,7 @@ def _serialize_runner_ups(runner_ups: Optional[list]) -> Optional[list]:
                 "end_time": r.lecture.end_time,
                 "seats_available": r.lecture.seats_available,
                 "total_seats": r.lecture.total_seats,
-                "linked_section": _serialize_linked(r.linked),
+                "linked_sections": [_serialize_linked(ls) for ls in r.linked_sections],
             })
         elif isinstance(r, dict):
             result.append(r)
@@ -1200,8 +1175,8 @@ def _deduplicate(
         ids: set[str] = set()
         for pair in schedule:
             ids.add(pair.lecture.section_id)
-            if pair.linked:
-                ids.add(pair.linked.section_id)
+            for ls in pair.linked_sections:
+                ids.add(ls.section_id)
         key = frozenset(ids)
 
         if key not in seen:

@@ -200,15 +200,15 @@ export function generateICS(schedule: Schedule, courses: CourseEntry[]): string 
       })
     )
 
-    // Linked section event (discussion / lab / quiz)
-    if (course.linked_section && course.linked_section.days?.length) {
-      const ls = course.linked_section
+    // Linked section events (discussion, lab, quiz, etc.)
+    for (const ls of course.linked_sections) {
+      if (!ls.days?.length) continue
       events.push(
         buildEvent({
           sectionId: `${course.section_id}-${ls.section_id}`,
           sectionType: ls.section_type,
           course: course.course,
-          professor: course.professor,   // same professor
+          professor: course.professor,
           location: ls.location,
           days: ls.days,
           startTime: ls.start_time,

@@ -186,9 +186,8 @@ def _build_html(schedule: dict) -> str:
                 inner = f'<div class="bn">{course}</div>'
             blocks.append(f'<div class="blk" style="{css}">{inner}</div>')
 
-        # Linked section blocks (discussion/lab) — indented, darkened color
-        linked = entry.get("linked_section")
-        if linked:
+        # Linked section blocks (discussion/lab/quiz/etc.) — indented, darkened color
+        for linked in entry.get("linked_sections", []):
             ls_color = _darken(color)
             stype = (linked.get("section_type") or "dis").capitalize()[:3]
             for day in linked.get("days", []):

@@ -228,29 +228,29 @@ function PlaceholderGrid({
               )
             })}
 
-            {/* Linked section blocks */}
-            {schedule.courses.map((course) => {
-              if (!course.linked_section) return null
-              if (!course.linked_section.days.includes(day)) return null
-              const ls = course.linked_section
-              const top = toPos(ls.start_time)
-              const height = toPos(ls.end_time) - top
-
-              return (
-                <div
-                  key={`${course.section_id}-linked`}
-                  className="absolute left-0.5 right-0.5 rounded-sm px-0.5 overflow-hidden bg-white/20"
-                  style={{
-                    top: `${top * 100}%`,
-                    height: `${Math.max(height * 100, 3)}%`,
-                  }}
-                >
-                  <p className="text-[0.45rem] text-white/70 leading-tight truncate pt-0.5">
-                    {ls.section_type}
-                  </p>
-                </div>
-              )
-            })}
+            {/* Linked section blocks (discussion, lab, quiz, etc.) */}
+            {schedule.courses.flatMap((course) =>
+              course.linked_sections
+                .filter((ls) => ls.days.includes(day))
+                .map((ls) => {
+                  const top = toPos(ls.start_time)
+                  const height = toPos(ls.end_time) - top
+                  return (
+                    <div
+                      key={`${course.section_id}-${ls.section_id}`}
+                      className="absolute left-0.5 right-0.5 rounded-sm px-0.5 overflow-hidden bg-white/20"
+                      style={{
+                        top: `${top * 100}%`,
+                        height: `${Math.max(height * 100, 3)}%`,
+                      }}
+                    >
+                      <p className="text-[0.45rem] text-white/70 leading-tight truncate pt-0.5">
+                        {ls.section_type}
+                      </p>
+                    </div>
+                  )
+                })
+            )}
           </div>
         ))}
       </div>

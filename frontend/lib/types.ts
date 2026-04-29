@@ -78,7 +78,7 @@ export interface RunnerUp {
   end_time: string                // "HH:MM" 24h
   seats_available: number
   total_seats: number
-  linked_section: LinkedSection | null
+  linked_sections: LinkedSection[]
 }
 
 // ---------------------------------------------------------------------------
@@ -125,8 +125,8 @@ export interface CourseEntry {
   // GE swap panel
   runner_ups: RunnerUp[] | null   // null for regular courses
 
-  // Linked discussion/lab/quiz
-  linked_section: LinkedSection | null
+  // Linked discussion/lab/quiz sections (one per required type)
+  linked_sections: LinkedSection[]
 }
 
 // ---------------------------------------------------------------------------

@@ -99,7 +99,7 @@ export default function ScheduleDetail({
                 seats_available: runner.seats_available,
                 total_seats: runner.total_seats,
                 seat_color: "#FFFFFF",
-                linked_section: runner.linked_section,
+                linked_sections: runner.linked_sections,
                 runner_ups: null,
               }
               onSwap(course.section_id, replacement)
@@ -202,16 +202,16 @@ function CourseRow({
               </span>
             </div>
 
-            {/* Linked section */}
-            {course.linked_section && (
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/25 pl-3 border-l border-white/10">
-                <span className="capitalize text-white/35">{course.linked_section.section_type}</span>
+            {/* Linked sections (discussion, lab, quiz, etc.) */}
+            {course.linked_sections.map((ls) => (
+              <div key={ls.section_id} className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/25 pl-3 border-l border-white/10">
+                <span className="capitalize text-white/35">{ls.section_type}</span>
                 <span>
-                  {formatDays(course.linked_section.days)} · {formatTime(course.linked_section.start_time)} – {formatTime(course.linked_section.end_time)}
+                  {formatDays(ls.days)} · {formatTime(ls.start_time)} – {formatTime(ls.end_time)}
                 </span>
-                <span>{course.linked_section.location}</span>
+                <span>{ls.location}</span>
               </div>
-            )}
+            ))}
           </div>
 
           {/* Right — RMP + seats */}
@@ -362,12 +362,12 @@ function RunnerUpRow({
             <span className="ml-2">{runner.seats_available} seats</span>
           )}
         </p>
-        {runner.linked_section && (
-          <p className="text-white/20 text-xs mt-0.5">
-            + {runner.linked_section.section_type} ·{" "}
-            {runner.linked_section.days.join("/")} · {formatTime(runner.linked_section.start_time)}
+        {runner.linked_sections.map((ls) => (
+          <p key={ls.section_id} className="text-white/20 text-xs mt-0.5">
+            + {ls.section_type} ·{" "}
+            {ls.days.join("/")} · {formatTime(ls.start_time)}
           </p>
-        )}
+        ))}
       </div>
       <button
         onClick={onSwap}
