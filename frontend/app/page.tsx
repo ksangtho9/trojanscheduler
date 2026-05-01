@@ -104,7 +104,7 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  const showWebRegHeader = stage !== "form"
+  const showWebRegHeader = stage !== "form" && stage !== "loading"
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--bg-page)" }}>

@@ -115,6 +115,11 @@ function indexToTime(idx: number): string {
   return minutesToHHMM(TIME_MIN_MINUTES + bounded * TIME_STEP)
 }
 
+function autoHyphen(s: string): string {
+  // "BUAD3" → "BUAD-3", "EE109" → "EE-109"; already-hyphenated strings unchanged
+  return s.replace(/^([A-Za-z]{2,5})(\d)/, "$1-$2")
+}
+
 function entryFilled(e: Entry): boolean {
   return Boolean(e.code.trim() || e.category)
 }
@@ -124,7 +129,7 @@ function pillLabel(e: Entry): string {
     if (e.category) return `GE ${e.category}`
     return "GE"
   }
-  return e.code.trim().toUpperCase() || "Course"
+  return e.code.trim().toUpperCase().replace(" ", "-") || "Course"
 }
 
 // ── Course autocomplete ────────────────────────────────────────────────────────
@@ -321,6 +326,7 @@ function DeptCourseSearchInput({
   const courses = useCourses()
   const [open, setOpen] = useState(false)
   const [geExpanded, setGeExpanded] = useState(false)
+  const [selectedDept, setSelectedDept] = useState<string | null>(null)
   const [hiIdx, setHiIdx] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -334,34 +340,72 @@ function DeptCourseSearchInput({
     return Array.from(set).sort()
   }, [courses])
 
-  const q = value.trim().toUpperCase()
-  const showDeptBrowser = open && q.length < 2
-  const showCourseSuggestions = open && q.length >= 2
+  // Normalize hyphens to spaces so "EE-109" matches course code "EE 109"
+  const q = value.trim().toUpperCase().replace(/-/g, " ")
 
-  const suggestions = showCourseSuggestions
-    ? courses
-        .filter((c) => c.code.startsWith(q) || c.code.includes(q) || c.title.toUpperCase().includes(q))
-        .sort((a, b) => {
-          const aStarts = a.code.startsWith(q)
-          const bStarts = b.code.startsWith(q)
-          if (aStarts !== bStarts) return aStarts ? -1 : 1
-          return a.code.localeCompare(b.code)
-        })
-        .slice(0, 8)
+  // Typing a hyphen or space (e.g. "CSCI-270" or "CSCI 270") = direct course search
+  const typedCourseSearch = selectedDept === null && (value.includes("-") || value.includes(" ")) && q.trim().length >= 2
+
+  const filteredDepts = selectedDept === null && !typedCourseSearch
+    ? (q ? depts.filter((d) => d.startsWith(q) || d.includes(q)) : depts)
     : []
 
-  const commitCourse = (code: string) => {
-    onCommitCourse(code)
-    onChange("")
+  const deptCourses = selectedDept !== null
+    ? courses.filter((c) => {
+        if (c.code.split(" ")[0] !== selectedDept) return false
+        if (!q) return true
+        return c.code.toUpperCase().includes(q) || c.title.toUpperCase().includes(q)
+      })
+    : []
+
+  const globalSuggestions = typedCourseSearch
+    ? courses
+        .filter((c) => c.code.startsWith(q) || c.title.toUpperCase().includes(q))
+        .sort((a, b) => {
+          const aEx = a.code.startsWith(q), bEx = b.code.startsWith(q)
+          if (aEx !== bEx) return aEx ? -1 : 1
+          return a.code.localeCompare(b.code)
+        })
+        .slice(0, 10)
+    : []
+
+  const panel: "dept-browser" | "dept-courses" | "course-search" =
+    selectedDept !== null ? "dept-courses"
+    : typedCourseSearch   ? "course-search"
+    : "dept-browser"
+
+  const navItems =
+    panel === "dept-courses" ? deptCourses :
+    panel === "course-search" ? globalSuggestions :
+    filteredDepts
+
+  const closeAll = () => {
     setOpen(false)
+    setSelectedDept(null)
+    setGeExpanded(false)
+  }
+
+  const commitCourse = (code: string) => {
+    onCommitCourse(code.replace(/-/g, " "))
+    onChange("")
+    closeAll()
+  }
+
+  const drillIntoDept = (dept: string) => {
+    setSelectedDept(dept)
+    onChange("")
+    setHiIdx(0)
+  }
+
+  const goBack = () => {
+    setSelectedDept(null)
+    onChange("")
+    setHiIdx(0)
   }
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) {
-        setOpen(false)
-        setGeExpanded(false)
-      }
+      if (!containerRef.current?.contains(e.target as Node)) closeAll()
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
@@ -378,7 +422,37 @@ function DeptCourseSearchInput({
     background: "var(--bg-card)",
     boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
     marginTop: 2,
+    maxHeight: 300,
+    overflowY: "auto",
   }
+
+  const courseRow = (c: { code: string; title: string }, i: number) => (
+    <button
+      key={c.code}
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => commitCourse(c.code)}
+      onMouseEnter={() => setHiIdx(i)}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "6px 10px",
+        background: i === hiIdx ? "rgba(153,0,0,0.07)" : "transparent",
+        border: "none",
+        cursor: "pointer",
+      }}
+    >
+      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+        {c.code.replace(" ", "-")}
+      </span>
+      {c.title && (
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
+          {c.title}
+        </span>
+      )}
+    </button>
+  )
 
   return (
     <div ref={containerRef} style={{ position: "relative", flex: 1 }}>
@@ -386,153 +460,159 @@ function DeptCourseSearchInput({
         ref={inputRef}
         type="text"
         className="form-add-input"
-        placeholder={placeholder}
+        placeholder={selectedDept ? `Filter ${selectedDept} courses…` : placeholder}
         value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); setHiIdx(0) }}
+        onChange={(e) => { onChange(autoHyphen(e.target.value)); setOpen(true); setHiIdx(0) }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
+          if (!open) return
           if (e.key === "ArrowDown") {
             e.preventDefault()
-            setHiIdx((i) => Math.min(i + 1, suggestions.length - 1))
+            setHiIdx((i) => Math.min(i + 1, navItems.length - 1))
           } else if (e.key === "ArrowUp") {
             e.preventDefault()
             setHiIdx((i) => Math.max(i - 1, 0))
           } else if (e.key === "Enter") {
             e.preventDefault()
-            if (showCourseSuggestions && suggestions[hiIdx]) {
-              commitCourse(suggestions[hiIdx].code)
-            } else if (value.trim()) {
-              commitCourse(value.trim().toUpperCase())
+            if (panel === "dept-courses") {
+              if (deptCourses[hiIdx]) commitCourse(deptCourses[hiIdx].code)
+              else if (value.trim()) commitCourse(value.trim().toUpperCase())
+            } else if (panel === "course-search") {
+              if (globalSuggestions[hiIdx]) commitCourse(globalSuggestions[hiIdx].code)
+              else if (value.trim()) commitCourse(value.trim().toUpperCase())
+            } else {
+              if (filteredDepts[hiIdx]) drillIntoDept(filteredDepts[hiIdx])
+              else if (value.trim()) commitCourse(value.trim().toUpperCase())
             }
           } else if (e.key === "Escape") {
-            setOpen(false)
+            e.preventDefault()
+            if (selectedDept !== null) goBack()
+            else closeAll()
+          } else if (e.key === "Backspace" && !value && selectedDept !== null) {
+            e.preventDefault()
+            goBack()
           }
         }}
       />
 
-      {/* Dept browser — shown when input is empty or 1 char */}
-      {showDeptBrowser && (
-        <div style={{ ...dropdownStyle, maxHeight: 280, overflowY: "auto" }}>
-          {/* GE pinned at top */}
-          <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-            <button
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); setGeExpanded((v) => !v) }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                width: "100%",
-                textAlign: "left",
-                padding: "7px 10px",
-                background: geExpanded ? "rgba(255,204,0,0.08)" : "transparent",
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              <PinIcon />
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em" }}>GE</span>
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 2 }}>GE Requirements</span>
-              <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-tertiary)" }}>{geExpanded ? "▴" : "▾"}</span>
-            </button>
-            {geExpanded && (
-              <div style={{ background: "rgba(255,204,0,0.03)" }}>
-                {GE_CATEGORIES.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      onCommitGE(cat)
-                      onChange("")
-                      setOpen(false)
-                      setGeExpanded(false)
-                    }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "5px 10px 5px 26px",
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.14)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                  >
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 18 }}>
-                      {cat}
-                    </span>
-                    <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                      {GE_CATEGORY_LABELS[cat]}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+      {open && (
+        <div style={dropdownStyle}>
 
-          {/* Dept codes */}
-          {depts.map((dept) => (
-            <button
-              key={dept}
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault()
-                onChange(dept + " ")
-                setGeExpanded(false)
-                setTimeout(() => inputRef.current?.focus(), 0)
-              }}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "6px 10px",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(153,0,0,0.06)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-            >
-              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
-                {dept}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Course suggestions — shown when typing */}
-      {showCourseSuggestions && suggestions.length > 0 && (
-        <div style={{ ...dropdownStyle, overflow: "hidden" }}>
-          {suggestions.map((c, i) => (
-            <button
-              key={c.code}
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); commitCourse(c.code) }}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "6px 10px",
-                background: i === hiIdx ? "rgba(153,0,0,0.07)" : "transparent",
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
-                {c.code}
-              </span>
-              {c.title && (
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
-                  {c.title}
+          {/* ── Dept course list ────────────────────────── */}
+          {panel === "dept-courses" && (
+            <>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={goBack}
+                style={{
+                  position: "sticky", top: 0, zIndex: 1,
+                  display: "flex", alignItems: "center", gap: 6,
+                  width: "100%", padding: "7px 10px",
+                  background: "var(--bg-card)", border: "none",
+                  borderBottom: "1px solid var(--border-subtle)", cursor: "pointer",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "var(--bg-card)")}
+              >
+                <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>◀</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+                  {selectedDept}
                 </span>
-              )}
-            </button>
-          ))}
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>— pick a course</span>
+              </button>
+              {deptCourses.length === 0
+                ? <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                    {q ? `No matches for "${q}"` : "No courses listed"}
+                  </div>
+                : deptCourses.map(courseRow)
+              }
+            </>
+          )}
+
+          {/* ── Direct course search (typed "DEPT NUM") ── */}
+          {panel === "course-search" && (
+            globalSuggestions.length === 0
+              ? <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No matches</div>
+              : globalSuggestions.map(courseRow)
+          )}
+
+          {/* ── Dept browser ────────────────────────────── */}
+          {panel === "dept-browser" && (
+            <>
+              {/* GE pinned at top */}
+              <div style={{ position: "sticky", top: 0, background: "var(--bg-card)", zIndex: 1, borderBottom: "1px solid var(--border-subtle)" }}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setGeExpanded((v) => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    width: "100%", textAlign: "left", padding: "7px 10px",
+                    background: geExpanded ? "rgba(255,204,0,0.08)" : "transparent",
+                    border: "none", cursor: "pointer",
+                  }}
+                >
+                  <PinIcon />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em" }}>GE</span>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 2 }}>GE Requirements</span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-tertiary)" }}>{geExpanded ? "▴" : "▾"}</span>
+                </button>
+                {geExpanded && (
+                  <div style={{ background: "rgba(255,204,0,0.03)" }}>
+                    {GE_CATEGORIES.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { onCommitGE(cat); onChange(""); closeAll() }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          width: "100%", textAlign: "left", padding: "5px 10px 5px 26px",
+                          border: "none", background: "transparent", cursor: "pointer",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.14)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 18 }}>
+                          {cat}
+                        </span>
+                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                          {GE_CATEGORY_LABELS[cat]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Dept list */}
+              {filteredDepts.length === 0
+                ? <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No departments match</div>
+                : filteredDepts.map((dept, i) => (
+                  <button
+                    key={dept}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => drillIntoDept(dept)}
+                    onMouseEnter={() => setHiIdx(i)}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      width: "100%", textAlign: "left", padding: "6px 10px",
+                      background: i === hiIdx ? "rgba(153,0,0,0.06)" : "transparent",
+                      border: "none", cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+                      {dept}
+                    </span>
+                    <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>▶</span>
+                  </button>
+                ))
+              }
+            </>
+          )}
+
         </div>
       )}
     </div>
@@ -580,7 +660,7 @@ export default function InputForm({
     if (e.type === "course") {
       return {
         type: "course",
-        code: e.code.trim().toUpperCase() || undefined,
+        code: e.code.trim().toUpperCase().replace(/-/g, " ") || undefined,
         professor: e.professor.trim() || undefined,
         section_id: e.section_id.trim() || undefined,
       }
@@ -1457,9 +1537,13 @@ function EntryEditor({
         <>
           <input
             type="text"
-            value={entry.code}
-            onChange={(e) => updateEntry(list, setList, entry.id, { code: e.target.value })}
-            placeholder="Course code"
+            value={entry.code.replace(" ", "-")}
+            onChange={(e) =>
+              updateEntry(list, setList, entry.id, {
+                code: autoHyphen(e.target.value).replace(/-/g, " "),
+              })
+            }
+            placeholder="e.g. CSCI-270"
             style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}
           />
           <CourseDetailsSelectors
