@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -19,6 +20,16 @@ import {
 
 const GE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G"]
 
+const GE_CATEGORY_LABELS: Record<string, string> = {
+  A: "First-Year Writing",
+  B: "Scientific Inquiry",
+  C: "Arts and Letters",
+  D: "Social Analysis",
+  E: "Quantitative Reasoning",
+  F: "Foreign Language",
+  G: "Global Perspectives",
+}
+
 const TIME_MIN_MINUTES = 7 * 60
 const TIME_MAX_MINUTES = 22 * 60
 const TIME_STEP = 30
@@ -31,9 +42,22 @@ interface Entry {
   professor: string
   section_id: string
   category: string
-  categories: string[]
-  multiGE: boolean
   expanded: boolean
+}
+
+interface SectionOption {
+  section_id: string
+  professor: string
+  days: string[]
+  start_time: string
+  end_time: string
+  seats_available: number
+  total_seats: number
+}
+
+interface CourseOptions {
+  professors: string[]
+  sections: SectionOption[]
 }
 
 interface Props {
@@ -52,8 +76,6 @@ const newEntry = (): Entry => ({
   professor: "",
   section_id: "",
   category: "",
-  categories: [],
-  multiGE: false,
   expanded: false,
 })
 
@@ -94,16 +116,11 @@ function indexToTime(idx: number): string {
 }
 
 function entryFilled(e: Entry): boolean {
-  return Boolean(
-    e.code.trim() ||
-      e.category ||
-      (e.categories && e.categories.length > 0)
-  )
+  return Boolean(e.code.trim() || e.category)
 }
 
 function pillLabel(e: Entry): string {
   if (e.type === "ge") {
-    if (e.multiGE && e.categories.length) return `GE ${e.categories.sort().join("+")}`
     if (e.category) return `GE ${e.category}`
     return "GE"
   }
@@ -126,55 +143,247 @@ function useCourses() {
   return courses
 }
 
-function AutocompleteInput({
+// ── Course options (professors + time slots) ───────────────────────────────────
+
+const _optionsCache: Record<string, CourseOptions> = {}
+
+function useCourseOptions(code: string) {
+  const [options, setOptions] = useState<CourseOptions | null>(null)
+  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    const key = code.trim().toUpperCase()
+    if (!key) { setOptions(null); return }
+    if (_optionsCache[key]) { setOptions(_optionsCache[key]); return }
+    setLoading(true)
+    const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? ""
+    fetch(`${base}/course-options?code=${encodeURIComponent(key)}`)
+      .then((r) => r.json())
+      .then((data: CourseOptions) => { _optionsCache[key] = data; setOptions(data) })
+      .catch(() => setOptions({ professors: [], sections: [] }))
+      .finally(() => setLoading(false))
+  }, [code])
+  return { options, loading }
+}
+
+function formatSectionLabel(s: SectionOption): string {
+  const days = s.days.join("/")
+  const time = `${s.start_time}–${s.end_time}`
+  if (s.seats_available === 0) return `${days} ${time}`
+  const seats = s.seats_available === 1 ? "1 seat" : `${s.seats_available} seats`
+  return `${days} ${time}  ·  ${seats} open`
+}
+
+function SectionDropdown({
+  sections,
   value,
   onChange,
-  onCommit,
+}: {
+  sections: SectionOption[]
+  value: string
+  onChange: (sid: string, prof: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+
+  const selected = sections.find((s) => s.section_id === value)
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "4px",
+          padding: "6px 10px",
+          fontSize: "13px",
+          border: "1px solid var(--border-default)",
+          borderRadius: "8px",
+          background: "white",
+          cursor: "pointer",
+          color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected ? formatSectionLabel(selected) : "Any time"}
+        </span>
+        <span style={{ flexShrink: 0, color: "var(--text-tertiary)", fontSize: "11px" }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: "white",
+            border: "1px solid var(--border-default)",
+            borderRadius: "8px",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+            maxHeight: "220px",
+            overflowY: "auto",
+          }}
+        >
+          <div
+            onClick={() => { onChange("", ""); setOpen(false) }}
+            style={{
+              padding: "8px 10px",
+              fontSize: "13px",
+              cursor: "pointer",
+              color: value === "" ? "var(--text-primary)" : "var(--text-secondary)",
+              fontWeight: value === "" ? 600 : 400,
+              borderBottom: "1px solid var(--border-default)",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            Any time
+          </div>
+          {sections.map((s) => {
+            const isFull = s.seats_available === 0
+            const isSelected = s.section_id === value
+            return (
+              <div
+                key={s.section_id}
+                onClick={() => { onChange(s.section_id, s.professor); setOpen(false) }}
+                style={{
+                  padding: "8px 10px",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "8px",
+                  background: isFull ? "rgba(220,38,38,0.06)" : isSelected ? "rgba(153,0,0,0.06)" : "transparent",
+                  color: isFull ? "rgba(160,20,20,0.75)" : "var(--text-primary)",
+                  fontWeight: isSelected ? 600 : 400,
+                }}
+                onMouseEnter={(e) => {
+                  if (!isFull) e.currentTarget.style.background = isSelected ? "rgba(153,0,0,0.10)" : "var(--bg-subtle, #f9f9f9)"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isFull ? "rgba(220,38,38,0.06)" : isSelected ? "rgba(153,0,0,0.06)" : "transparent"
+                }}
+              >
+                <span>{formatSectionLabel(s)}</span>
+                {isFull && (
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      padding: "1px 6px",
+                      borderRadius: "99px",
+                      background: "rgba(220,38,38,0.12)",
+                      color: "rgba(160,20,20,0.85)",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    FULL
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DeptCourseSearchInput({
+  value,
+  onChange,
+  onCommitCourse,
+  onCommitGE,
   placeholder,
 }: {
   value: string
   onChange: (v: string) => void
-  onCommit: (code: string) => void
+  onCommitCourse: (code: string) => void
+  onCommitGE: (category: string) => void
   placeholder: string
 }) {
   const courses = useCourses()
   const [open, setOpen] = useState(false)
+  const [geExpanded, setGeExpanded] = useState(false)
   const [hiIdx, setHiIdx] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const depts = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of courses) {
+      const prefix = c.code.split(" ")[0]
+      if (prefix) set.add(prefix)
+    }
+    return Array.from(set).sort()
+  }, [courses])
 
   const q = value.trim().toUpperCase()
-  const suggestions =
-    q.length < 2
-      ? []
-      : courses
-          .filter((c) => c.code.startsWith(q) || c.code.includes(q) || c.title.toUpperCase().includes(q))
-          .sort((a, b) => {
-            const aStarts = a.code.startsWith(q)
-            const bStarts = b.code.startsWith(q)
-            if (aStarts !== bStarts) return aStarts ? -1 : 1
-            return a.code.localeCompare(b.code)
-          })
-          .slice(0, 8)
+  const showDeptBrowser = open && q.length < 2
+  const showCourseSuggestions = open && q.length >= 2
 
-  const showDropdown = open && suggestions.length > 0
+  const suggestions = showCourseSuggestions
+    ? courses
+        .filter((c) => c.code.startsWith(q) || c.code.includes(q) || c.title.toUpperCase().includes(q))
+        .sort((a, b) => {
+          const aStarts = a.code.startsWith(q)
+          const bStarts = b.code.startsWith(q)
+          if (aStarts !== bStarts) return aStarts ? -1 : 1
+          return a.code.localeCompare(b.code)
+        })
+        .slice(0, 8)
+    : []
 
-  const commit = (code: string) => {
-    onCommit(code)
+  const commitCourse = (code: string) => {
+    onCommitCourse(code)
     onChange("")
     setOpen(false)
   }
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+      if (!containerRef.current?.contains(e.target as Node)) {
+        setOpen(false)
+        setGeExpanded(false)
+      }
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
   }, [])
 
+  const dropdownStyle: CSSProperties = {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    zIndex: 9999,
+    borderRadius: 8,
+    border: "1px solid var(--border-default)",
+    background: "var(--bg-card)",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+    marginTop: 2,
+  }
+
   return (
     <div ref={containerRef} style={{ position: "relative", flex: 1 }}>
       <input
+        ref={inputRef}
         type="text"
         className="form-add-input"
         placeholder={placeholder}
@@ -190,37 +399,120 @@ function AutocompleteInput({
             setHiIdx((i) => Math.max(i - 1, 0))
           } else if (e.key === "Enter") {
             e.preventDefault()
-            if (showDropdown && suggestions[hiIdx]) {
-              commit(suggestions[hiIdx].code)
-            } else {
-              commit(value.trim().toUpperCase())
+            if (showCourseSuggestions && suggestions[hiIdx]) {
+              commitCourse(suggestions[hiIdx].code)
+            } else if (value.trim()) {
+              commitCourse(value.trim().toUpperCase())
             }
           } else if (e.key === "Escape") {
             setOpen(false)
           }
         }}
       />
-      {showDropdown && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
-            zIndex: 50,
-            borderRadius: 8,
-            border: "1px solid var(--border-default)",
-            background: "var(--bg-card)",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
-            marginTop: 2,
-            overflow: "hidden",
-          }}
-        >
+
+      {/* Dept browser — shown when input is empty or 1 char */}
+      {showDeptBrowser && (
+        <div style={{ ...dropdownStyle, maxHeight: 280, overflowY: "auto" }}>
+          {/* GE pinned at top */}
+          <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); setGeExpanded((v) => !v) }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                width: "100%",
+                textAlign: "left",
+                padding: "7px 10px",
+                background: geExpanded ? "rgba(255,204,0,0.08)" : "transparent",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              <PinIcon />
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em" }}>GE</span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 2 }}>GE Requirements</span>
+              <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-tertiary)" }}>{geExpanded ? "▴" : "▾"}</span>
+            </button>
+            {geExpanded && (
+              <div style={{ background: "rgba(255,204,0,0.03)" }}>
+                {GE_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      onCommitGE(cat)
+                      onChange("")
+                      setOpen(false)
+                      setGeExpanded(false)
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "5px 10px 5px 26px",
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.14)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 18 }}>
+                      {cat}
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                      {GE_CATEGORY_LABELS[cat]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Dept codes */}
+          {depts.map((dept) => (
+            <button
+              key={dept}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                onChange(dept + " ")
+                setGeExpanded(false)
+                setTimeout(() => inputRef.current?.focus(), 0)
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "6px 10px",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(153,0,0,0.06)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+                {dept}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Course suggestions — shown when typing */}
+      {showCourseSuggestions && suggestions.length > 0 && (
+        <div style={{ ...dropdownStyle, overflow: "hidden" }}>
           {suggestions.map((c, i) => (
             <button
               key={c.code}
               type="button"
-              onMouseDown={(e) => { e.preventDefault(); commit(c.code) }}
+              onMouseDown={(e) => { e.preventDefault(); commitCourse(c.code) }}
               style={{
                 display: "block",
                 width: "100%",
@@ -284,18 +576,6 @@ export default function InputForm({
     if (currentEdit === id) clearEditing(null)
   }
 
-  const toggleCategory = (
-    entry: Entry,
-    list: Entry[],
-    setList: (l: Entry[]) => void,
-    cat: string
-  ) => {
-    const cats = entry.categories.includes(cat)
-      ? entry.categories.filter((c) => c !== cat)
-      : [...entry.categories, cat]
-    updateEntry(list, setList, entry.id, { categories: cats })
-  }
-
   const toApiEntry = (e: Entry): CourseInputEntry => {
     if (e.type === "course") {
       return {
@@ -304,9 +584,6 @@ export default function InputForm({
         professor: e.professor.trim() || undefined,
         section_id: e.section_id.trim() || undefined,
       }
-    }
-    if (e.multiGE && e.categories.length > 0) {
-      return { type: "ge", categories: e.categories }
     }
     return { type: "ge", category: e.category || undefined }
   }
@@ -347,18 +624,16 @@ export default function InputForm({
     setDraftNice("")
   }
 
-  const addGeMust = () => {
+  const commitGEMust = (category: string) => {
     if (mustHaves.length >= 6) return
-    const e = { ...newEntry(), type: "ge" as const }
-    setMustHaves([...mustHaves, e])
-    setEditingMustId(e.id)
+    setMustHaves((prev) => [...prev, { ...newEntry(), type: "ge", category }])
+    setDraftMust("")
   }
 
-  const addGeNice = () => {
+  const commitGENice = (category: string) => {
     if (niceToHaves.length >= 4) return
-    const e = { ...newEntry(), type: "ge" as const }
-    setNiceToHaves([...niceToHaves, e])
-    setEditingNiceId(e.id)
+    setNiceToHaves((prev) => [...prev, { ...newEntry(), type: "ge", category }])
+    setDraftNice("")
   }
 
   const earliestIdx = timeToIndex(constraints.earliest_start)
@@ -515,12 +790,11 @@ export default function InputForm({
             draftPlaceholder="Add a course or GE requirement…"
             onCommitDraft={commitDraftMust}
             onCommitCode={commitCodeMust}
-            onAddGe={addGeMust}
+            onCommitGE={commitGEMust}
             updateEntry={updateEntry}
             removeEntry={(list, setList, id) =>
               deleteEntryAndClearEdit(list, setList, id, setEditingMustId, editingMustId)
             }
-            toggleCategory={toggleCategory}
           />
         </section>
 
@@ -554,12 +828,11 @@ export default function InputForm({
             draftPlaceholder="Add an optional course or GE…"
             onCommitDraft={commitDraftNice}
             onCommitCode={commitCodeNice}
-            onAddGe={addGeNice}
+            onCommitGE={commitGENice}
             updateEntry={updateEntry}
             removeEntry={(list, setList, id) =>
               deleteEntryAndClearEdit(list, setList, id, setEditingNiceId, editingNiceId)
             }
-            toggleCategory={toggleCategory}
           />
         </section>
 
@@ -951,10 +1224,9 @@ function CourseEntryBlock({
   draftPlaceholder,
   onCommitDraft,
   onCommitCode,
-  onAddGe,
+  onCommitGE,
   updateEntry,
   removeEntry,
-  toggleCategory,
 }: {
   entries: Entry[]
   setEntries: Dispatch<SetStateAction<Entry[]>>
@@ -966,10 +1238,9 @@ function CourseEntryBlock({
   draftPlaceholder: string
   onCommitDraft: () => void
   onCommitCode: (code: string) => void
-  onAddGe: () => void
+  onCommitGE: (category: string) => void
   updateEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number, patch: Partial<Entry>) => void
   removeEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number) => void
-  toggleCategory: (entry: Entry, list: Entry[], setList: (l: Entry[]) => void, cat: string) => void
 }) {
   const filled = entries.filter(entryFilled)
   const incomplete = entries.filter((e) => !entryFilled(e))
@@ -1023,7 +1294,6 @@ function CourseEntryBlock({
               setList={setEntries}
               updateEntry={updateEntry}
               removeEntry={removeEntry}
-              toggleCategory={toggleCategory}
             />
           )}
           {incomplete
@@ -1036,7 +1306,6 @@ function CourseEntryBlock({
                 setList={setEntries}
                 updateEntry={updateEntry}
                 removeEntry={removeEntry}
-                toggleCategory={toggleCategory}
               />
             ))}
         </div>
@@ -1047,10 +1316,11 @@ function CourseEntryBlock({
           <span className="shrink-0" style={{ color: "var(--text-tertiary)" }}>
             <BookIcon />
           </span>
-          <AutocompleteInput
+          <DeptCourseSearchInput
             value={draft}
             onChange={setDraft}
-            onCommit={onCommitCode}
+            onCommitCourse={onCommitCode}
+            onCommitGE={onCommitGE}
             placeholder={draftPlaceholder}
           />
           <span className="shrink-0" style={{ color: "var(--text-tertiary)" }}>
@@ -1058,17 +1328,98 @@ function CourseEntryBlock({
           </span>
         </div>
       )}
+    </div>
+  )
+}
 
-      {!atCap && (
-        <button
-          type="button"
-          className="text-[11px] font-medium hover:underline leading-none"
-          style={{ color: "var(--cardinal)" }}
-          onClick={onAddGe}
-        >
-          + Add GE requirement
-        </button>
-      )}
+function CourseDetailsSelectors({
+  code,
+  professor,
+  sectionId,
+  onProfessorChange,
+  onSectionChange,
+}: {
+  code: string
+  professor: string
+  sectionId: string
+  onProfessorChange: (prof: string) => void
+  onSectionChange: (sid: string, prof: string) => void
+}) {
+  const { options, loading } = useCourseOptions(code)
+
+  const safeProf = professor ?? ""
+  const safeSid = sectionId ?? ""
+
+  if (!code.trim()) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input
+          value={safeProf}
+          onChange={(e) => onProfessorChange(e.target.value)}
+          placeholder="Professor (optional)"
+        />
+        <input
+          value={safeSid}
+          onChange={(e) => onSectionChange(e.target.value, "")}
+          placeholder="Section ID (optional)"
+        />
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input disabled value="" placeholder="Loading…" style={{ opacity: 0.5 }} />
+        <input disabled value="" placeholder="Loading…" style={{ opacity: 0.5 }} />
+      </div>
+    )
+  }
+
+  if (!options || options.sections.length === 0) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input
+          value={safeProf}
+          onChange={(e) => onProfessorChange(e.target.value)}
+          placeholder="Professor (optional)"
+        />
+        <input
+          value={safeSid}
+          onChange={(e) => onSectionChange(e.target.value, "")}
+          placeholder="Section ID (optional)"
+        />
+      </div>
+    )
+  }
+
+  const visibleSections = safeProf
+    ? options.sections.filter((s) => s.professor === safeProf)
+    : options.sections
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <select
+        value={safeProf}
+        onChange={(e) => onProfessorChange(e.target.value)}
+      >
+        <option value="">Any professor</option>
+        {options.professors.length === 0 ? (
+          <option disabled style={{ fontStyle: "italic", color: "#999" }}>
+            Professors will be announced later
+          </option>
+        ) : (
+          options.professors.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))
+        )}
+      </select>
+
+      <SectionDropdown
+        sections={visibleSections}
+        value={safeSid}
+        onChange={onSectionChange}
+      />
     </div>
   )
 }
@@ -1079,20 +1430,18 @@ function EntryEditor({
   setList,
   updateEntry,
   removeEntry,
-  toggleCategory,
 }: {
   entry: Entry
   list: Entry[]
   setList: (l: Entry[]) => void
   updateEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number, patch: Partial<Entry>) => void
   removeEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number) => void
-  toggleCategory: (entry: Entry, list: Entry[], setList: (l: Entry[]) => void, cat: string) => void
 }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
-          Edit entry
+          {entry.type === "ge" ? "GE requirement" : "Edit course"}
         </span>
         <button
           type="button"
@@ -1105,123 +1454,43 @@ function EntryEditor({
       </div>
 
       {entry.type === "course" && (
-        <input
-          type="text"
-          value={entry.code}
-          onChange={(e) => updateEntry(list, setList, entry.id, { code: e.target.value })}
-          placeholder="Course code"
-          style={{
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-          }}
-        />
-      )}
-
-      <div
-        className="inline-flex rounded-lg overflow-hidden"
-        style={{ border: "1px solid var(--border-default)" }}
-      >
-        <button
-          type="button"
-          onClick={() => updateEntry(list, setList, entry.id, { type: "course" })}
-            className="px-2 py-1 text-[11px] font-medium transition-colors"
-              style={{
-                backgroundColor: entry.type === "course" ? "var(--cardinal)" : "white",
-                color: entry.type === "course" ? "white" : "var(--text-secondary)",
-              }}
-            >
-              Course
-            </button>
-            <button
-              type="button"
-              onClick={() => updateEntry(list, setList, entry.id, { type: "ge" })}
-              className="px-2 py-1 text-[11px] font-medium transition-colors"
-          style={{
-            backgroundColor: entry.type === "ge" ? "rgba(255,204,0,0.20)" : "white",
-            color: entry.type === "ge" ? "#8A6D00" : "var(--text-secondary)",
-          }}
-        >
-          GE Requirement
-        </button>
-      </div>
-
-      {entry.type === "course" && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {(["professor", "section_id"] as const).map((field) => (
-            <input
-              key={field}
-              value={entry[field]}
-              onChange={(e) => updateEntry(list, setList, entry.id, { [field]: e.target.value })}
-              placeholder={field === "professor" ? "Professor (optional)" : "Section ID (optional)"}
-            />
-          ))}
-        </div>
+        <>
+          <input
+            type="text"
+            value={entry.code}
+            onChange={(e) => updateEntry(list, setList, entry.id, { code: e.target.value })}
+            placeholder="Course code"
+            style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}
+          />
+          <CourseDetailsSelectors
+            code={entry.code}
+            professor={entry.professor}
+            sectionId={entry.section_id}
+            onProfessorChange={(prof) =>
+              updateEntry(list, setList, entry.id, { professor: prof, section_id: "" })
+            }
+            onSectionChange={(sid, prof) =>
+              updateEntry(list, setList, entry.id, {
+                section_id: sid,
+                professor: prof || entry.professor,
+              })
+            }
+          />
+        </>
       )}
 
       {entry.type === "ge" && (
-        <div className="space-y-2">
-          <label
-            className="flex items-center gap-2 cursor-pointer select-none"
-            onClick={() =>
-              updateEntry(list, setList, entry.id, { multiGE: !entry.multiGE, categories: [], category: "" })
-            }
-          >
-            <div
-              className="toggle"
-              style={{
-                width: "32px",
-                height: "17px",
-                backgroundColor: entry.multiGE ? "rgba(184,150,12,0.7)" : "var(--border-default)",
-              }}
-            >
-              <div
-                className="toggle-thumb"
-                style={{
-                  width: "13px",
-                  height: "13px",
-                  transform: entry.multiGE ? "translateX(15px)" : "translateX(0)",
-                }}
-              />
-            </div>
-            <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
-              {entry.multiGE ? "Double-count (2+ categories)" : "Single GE category"}
-            </span>
-          </label>
-
-          {entry.multiGE ? (
-            <div className="flex flex-wrap gap-1.5">
-              {GE_CATEGORIES.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => toggleCategory(entry, list, setList, cat)}
-                  className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
-                  style={{
-                    backgroundColor: entry.categories.includes(cat) ? "rgba(255,204,0,0.20)" : "white",
-                    border: entry.categories.includes(cat)
-                      ? "1.5px solid rgba(184,150,12,0.50)"
-                      : "1.5px solid var(--border-default)",
-                    color: entry.categories.includes(cat) ? "#8A6D00" : "var(--text-secondary)",
-                  }}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <select
-              value={entry.category}
-              onChange={(e) => updateEntry(list, setList, entry.id, { category: e.target.value })}
-            >
-              <option value="">Select GE category…</option>
-              {GE_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  Category {c}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+        <select
+          value={entry.category}
+          onChange={(e) => updateEntry(list, setList, entry.id, { category: e.target.value })}
+        >
+          <option value="">Select GE category…</option>
+          {GE_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              GE {c} · {GE_CATEGORY_LABELS[c]}
+            </option>
+          ))}
+        </select>
       )}
     </div>
   )
@@ -1275,6 +1544,15 @@ function formatTime(t: string): string {
   const ampm = h >= 12 ? "pm" : "am"
   const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
   return `${hour}:${m.toString().padStart(2, "0")} ${ampm}`
+}
+
+function PinIcon() {
+  return (
+    <svg width="10" height="12" viewBox="0 0 10 16" fill="none" aria-hidden style={{ flexShrink: 0, color: "#8A6D00" }}>
+      <circle cx="5" cy="4" r="3.5" fill="currentColor" />
+      <rect x="4" y="7" width="2" height="8" rx="1" fill="currentColor" />
+    </svg>
+  )
 }
 
 function BookIcon() {

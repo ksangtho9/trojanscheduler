@@ -130,9 +130,8 @@ class CourseInput:
     category: Optional[str] = None        # e.g. "C" — for single GE mode
     categories: Optional[list[str]] = None # e.g. ["C","D"] — for multi-GE mode
 
-    # Set by solver after pre-processing — which linked section the
-    # user prefers (if they were prompted for discussion selection)
-    preferred_discussion_section_id: Optional[str] = None  # section_id of chosen linked section
+    ge_code: Optional[str] = None                    # specific course within a GE category
+    preferred_linked_section_ids: Optional[dict] = None  # section_type → section_id
 
 
 @dataclass
@@ -268,24 +267,26 @@ def filter_and_pin_sections(
       6. Pin to section_id (hard error if not found)
       7. Cap to top-N by RMP score
     """
+    label = course_input.code or course_input.ge_code or "this course"
+
     # 1. Remove full sections
     result = [s for s in sections if s.seats_available > 0]
     if not result:
-        return [], f"No open sections found for {course_input.code or 'this GE course'}."
+        return [], f"No open sections found for {label}."
 
     # 2. Modality
     result = [s for s in result if _modality_ok(s, constraints)]
     if not result:
         return [], (
             f"No {constraints.modality.replace('_', ' ')} sections available "
-            f"for {course_input.code}."
+            f"for {label}."
         )
 
     # 3. Time window
     result = [s for s in result if _section_in_time_window(s, constraints)]
     if not result:
         return [], (
-            f"No sections of {course_input.code} fall within your "
+            f"No sections of {label} fall within your "
             f"{constraints.earliest_start}–{constraints.latest_end} time window."
         )
 
@@ -297,7 +298,7 @@ def filter_and_pin_sections(
     if not result:
         days_off_str = ", ".join(constraints.days_off)
         return [], (
-            f"All open sections of {course_input.code} meet on your "
+            f"All open sections of {label} meet on your "
             f"requested day(s) off ({days_off_str})."
         )
 
@@ -334,26 +335,27 @@ def filter_and_pin_sections(
 def expand_to_pairs(
     sections: list[Section],
     constraints: Constraints,
-    preferred_section_id: Optional[str] = None,
-) -> tuple[list[SectionPair], bool, list]:
+    preferred_linked_section_ids: Optional[dict[str, str]] = None,
+) -> tuple[list[SectionPair], bool, dict[str, list]]:
     """
     Expand lecture sections into SectionPairs, where each pair bundles one
     lecture with one required linked section per type (e.g. one discussion
     AND one lab). Uses cartesian product across type groups so every valid
     (lecture × discussion × lab × ...) combination is represented.
 
-    - No linked sections → SectionPair with empty linked_sections list.
-    - If preferred_section_id is set, the matching type group is pinned to
-      that section; other types still enumerate all eligible options.
-    - Discussion prompt fires when the "discussion" type has 2+ distinct time
-      slots and no preferred_section_id was given.
+    Prompt logic:
+    - Course has lab or quiz → prompt for every type with 2+ distinct time slots
+      (including discussion) that hasn't already been pinned via preferred_linked_section_ids.
+    - Course is discussion-only (no lab/quiz) → no prompt; solver enumerates all
+      discussion options and picks best fit via scoring.
 
     Returns:
-      (pairs, needs_discussion_prompt, display_options)
+      (pairs, needs_prompt, display_options_by_type)
+      display_options_by_type: dict mapping section_type → list of LinkedSection options
     """
     pairs: list[SectionPair] = []
     needs_prompt = False
-    display_options: list = []
+    display_options: dict[str, list] = {}
 
     for section in sections:
         if not section.linked_sections:
@@ -385,25 +387,30 @@ def expand_to_pairs(
         if any(len(g) == 0 for g in eligible_by_type.values()):
             continue
 
-        # Pin preferred_section_id to whichever type group it belongs to
-        if preferred_section_id:
-            for stype, display in display_by_type.items():
-                chosen = next((ls for ls in display if ls.section_id == preferred_section_id), None)
-                if chosen:
-                    eligible_by_type[stype] = [chosen]
-                    break
+        # Apply preferred_linked_section_ids to pin each type to a specific section
+        if preferred_linked_section_ids:
+            for stype in list(eligible_by_type.keys()):
+                chosen_id = preferred_linked_section_ids.get(stype)
+                if chosen_id:
+                    pinned = [ls for ls in eligible_by_type[stype] if ls.section_id == chosen_id]
+                    if pinned:
+                        eligible_by_type[stype] = pinned
 
-        # Discussion prompt: 2+ distinct time slots and no preference given yet
-        disc_eligible = eligible_by_type.get("discussion", [])
-        if disc_eligible and not preferred_section_id:
-            distinct_slots = {(tuple(ls.days), ls.start_time) for ls in disc_eligible}
-            if len(distinct_slots) >= 2:
-                needs_prompt = True
-                seen_ids = {ls.section_id for ls in display_options}
-                for ls in display_by_type.get("discussion", []):
-                    if ls.section_id not in seen_ids:
-                        display_options.append(ls)
-                        seen_ids.add(ls.section_id)
+        # Prompt fires only when course has lab or quiz (not discussion-only).
+        # For each such unpinned type with 2+ distinct time slots, ask the user to pick.
+        has_other_types = any(t != "discussion" for t in by_type.keys())
+        if has_other_types:
+            for stype, eligible in eligible_by_type.items():
+                if preferred_linked_section_ids and stype in preferred_linked_section_ids:
+                    continue
+                distinct_slots = {(tuple(ls.days), ls.start_time) for ls in eligible}
+                if len(distinct_slots) >= 2:
+                    needs_prompt = True
+                    seen_ids = {ls.section_id for ls in display_options.get(stype, [])}
+                    for ls in display_by_type.get(stype, []):
+                        if ls.section_id not in seen_ids:
+                            display_options.setdefault(stype, []).append(ls)
+                            seen_ids.add(ls.section_id)
 
         # Cartesian product across all type groups → one SectionPair per combo
         type_groups = list(eligible_by_type.values())
@@ -413,13 +420,9 @@ def expand_to_pairs(
     return pairs, needs_prompt, display_options
 
 
-def needs_discussion_prompt(sections: list[Section], constraints: Constraints) -> bool:
-    """
-    Quick check: should we ask the user for a discussion section preference
-    before running the full solver?
-    Returns True if any lecture has 2+ eligible linked sections in distinct time slots.
-    """
-    _, prompt, _ = expand_to_pairs(sections, constraints, preferred_section_id=None)
+def needs_linked_section_prompt(sections: list[Section], constraints: Constraints) -> bool:
+    """Returns True if any type for a course-with-lab/quiz has 2+ eligible time slots."""
+    _, prompt, _ = expand_to_pairs(sections, constraints, preferred_linked_section_ids=None)
     return prompt
 
 
@@ -501,9 +504,10 @@ def pair_conflicts_with_any(
 class SolverResult:
     def __init__(self):
         self.combinations: list[list[SectionPair]] = []
-        self.errors: list[str] = []             # per-course error messages
-        self.conflict_pairs: list[tuple[str, str]] = []  # (courseA, courseB) hard conflicts
-        self.discussion_options: dict[str, list] = {}   # course_code → display linked sections
+        self.errors: list[str] = []
+        self.conflict_pairs: list[tuple[str, str]] = []
+        self.linked_section_options: dict[str, dict[str, list]] = {}  # course_code → type → options
+        self.needs_linked_section_prompt: Optional[str] = None  # course_code
 
 
 def _find_conflicting_pair(
@@ -677,26 +681,24 @@ def resolve_must_haves(
         pairs, needs_prompt, options = expand_to_pairs(
             filtered,
             constraints,
-            preferred_section_id=course_input.preferred_discussion_section_id,
+            preferred_linked_section_ids=course_input.preferred_linked_section_ids,
         )
 
         if not pairs:
-            # Sections existed but no valid pairs after linking
             msg = _diagnose_over_constrained(raw_sections, course_code, constraints)
             result.errors.append(msg)
             continue
 
-        # Flag that a discussion prompt is needed before solving
-        # The API layer handles this by returning early and asking the frontend
-        if needs_prompt and course_input.preferred_discussion_section_id is None:
-            result.errors.append(f"NEEDS_DISCUSSION_PROMPT:{course_code}")
-            result.discussion_options[course_code] = options
+        # If a linked section prompt is needed, return early so the frontend can ask
+        if needs_prompt and not course_input.preferred_linked_section_ids:
+            result.needs_linked_section_prompt = course_code
+            result.linked_section_options[course_code] = options
             continue
 
         groups.append(pairs)
 
-    # If any hard errors, return immediately — no point backtracking
-    if result.errors:
+    # If a prompt is needed or any hard errors, return before backtracking
+    if result.needs_linked_section_prompt or result.errors:
         return result
 
     # Run backtracking
@@ -729,6 +731,7 @@ def auto_select_ge(
     placed: list[SectionPair],
     constraints: Constraints,
     ge_slot: str,
+    ge_input: "CourseInput",
     runner_up_count: int = 4,
     rmp_cap: int = 10,
 ) -> tuple[Optional[SectionPair], list[SectionPair], Optional[str]]:
@@ -736,16 +739,27 @@ def auto_select_ge(
     From a list of GE candidate sections, pick the highest-RMP pair
     that doesn't conflict with already-placed pairs.
 
+    ge_input carries optional narrowing fields:
+      ge_code    → restrict to a specific course within the category
+      professor  → pin to a specific professor
+      section_id → pin to an exact section
+
     Returns:
       (selected_pair, runner_ups, error_message)
       error_message is None if selection succeeded.
     """
     buffer_mins = 10 if constraints.no_back_to_back else 0
 
-    # Filter candidates
+    # Narrow by specific course code within the GE category
+    if ge_input.ge_code:
+        candidates = [s for s in candidates if s.course.upper() == ge_input.ge_code.upper()]
+        if not candidates:
+            return None, [], f"No sections of {ge_input.ge_code} found for {ge_slot}."
+
+    # Filter candidates (applies professor + section_id pins from ge_input)
     filtered, error = filter_and_pin_sections(
         candidates,
-        CourseInput(input_type="ge"),
+        ge_input,
         constraints,
         rmp_cap,
     )
@@ -765,8 +779,14 @@ def auto_select_ge(
             seen_ids.add(pair.lecture.section_id)
             ranked.append(pair)
 
-    # Pick first non-conflicting
-    valid = [p for p in ranked if not pair_conflicts_with_any(p, placed, buffer_mins)]
+    # Exclude courses already in the schedule — prevents a must-have course from
+    # doubling as a GE filler, and prevents the same course filling two GE slots.
+    placed_courses = {p.lecture.course for p in placed}
+    valid = [
+        p for p in ranked
+        if p.lecture.course not in placed_courses
+        and not pair_conflicts_with_any(p, placed, buffer_mins)
+    ]
 
     if not valid:
         return None, [], f"All available courses for {ge_slot} conflict with your schedule."
@@ -814,7 +834,7 @@ def inject_nice_to_haves(
         if not filtered:
             continue
 
-        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_discussion_section_id)
+        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_linked_section_ids)
         if not pairs:
             continue
 
@@ -1252,31 +1272,29 @@ def build_schedules(
         max_combinations,
     )
 
-    # Handle discussion prompt needed
-    prompt_error = next(
-        (e for e in solver_result.errors if e.startswith("NEEDS_DISCUSSION_PROMPT:")),
-        None,
-    )
-    if prompt_error:
-        course_code = prompt_error.split(":")[1]
-        raw_options = solver_result.discussion_options.get(course_code, [])
-        options = [
-            {
-                "section_id": ls.section_id,
-                "days": ls.days,
-                "start_time": ls.start_time,
-                "end_time": ls.end_time,
-                "seats_available": ls.seats_available,
-                "total_seats": ls.total_seats,
-                "location": ls.location,
-            }
-            for ls in raw_options
-        ]
+    # Handle linked section prompt needed (lab/quiz/discussion courses)
+    if solver_result.needs_linked_section_prompt:
+        course_code = solver_result.needs_linked_section_prompt
+        raw_options = solver_result.linked_section_options.get(course_code, {})
+        options_by_type: dict[str, list] = {}
+        for stype, linked_list in raw_options.items():
+            options_by_type[stype] = [
+                {
+                    "section_id": ls.section_id,
+                    "days": ls.days,
+                    "start_time": ls.start_time,
+                    "end_time": ls.end_time,
+                    "seats_available": ls.seats_available,
+                    "total_seats": ls.total_seats,
+                    "location": ls.location,
+                }
+                for ls in linked_list
+            ]
         return {
             "schedules": [],
             "error": None,
-            "needs_discussion_prompt": course_code,
-            "discussion_options": options,
+            "needs_linked_section_prompt": course_code,
+            "linked_section_options": options_by_type,
         }
 
     # Handle hard errors
@@ -1284,16 +1302,16 @@ def build_schedules(
         return {
             "schedules": [],
             "error": " | ".join(solver_result.errors),
-            "needs_discussion_prompt": None,
-            "discussion_options": [],
+            "needs_linked_section_prompt": None,
+            "linked_section_options": {},
         }
 
     if not solver_result.combinations:
         return {
             "schedules": [],
             "error": "No valid schedule could be built. Try relaxing your constraints.",
-            "needs_discussion_prompt": None,
-            "discussion_options": [],
+            "needs_linked_section_prompt": None,
+            "linked_section_options": {},
         }
 
     # --- Step 3: GE selection + nice-to-haves + scoring ---
@@ -1325,6 +1343,7 @@ def build_schedules(
                 schedule,
                 constraints,
                 slot_name,
+                ge_input=ge_input,
                 runner_up_count=4,
                 rmp_cap=rmp_cap,
             )
@@ -1372,8 +1391,8 @@ def build_schedules(
                 "No valid schedule could be built with your GE requirements. "
                 "Try broader GE categories or relax your time constraints."
             ),
-            "needs_discussion_prompt": None,
-            "discussion_options": [],
+            "needs_linked_section_prompt": None,
+            "linked_section_options": {},
         }
 
     top = _deduplicate(scored, top_n)
@@ -1400,5 +1419,6 @@ def build_schedules(
     return {
         "schedules": schedules,
         "error": None,
-        "needs_discussion_prompt": None,
+        "needs_linked_section_prompt": None,
+        "linked_section_options": {},
     }

@@ -185,3 +185,20 @@ async def fetch_dept_courses(
 def clear_dept_cache() -> None:
     """Call at the start of each /generate request to reset per-request cache."""
     _dept_cache.clear()
+
+
+def lookup_section_in_cache(section_id: str) -> str | None:
+    """
+    Scan the per-request dept cache for a sisSectionId.
+    Returns the course code (e.g. "CSCI 270") if found, None otherwise.
+    Only works after departments have been fetched (e.g. during GE candidate scraping).
+    """
+    for courses in _dept_cache.values():
+        for course in courses:
+            for sec in (course.get("sections") or []):
+                if sec.get("sisSectionId") == section_id:
+                    dept = course.get("prefix") or ""
+                    number = course.get("classNumber") or ""
+                    if dept and number:
+                        return f"{dept} {number}"
+    return None

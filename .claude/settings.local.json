@@ -17,7 +17,10 @@
       "Bash(python -c \"import base64; print\\(base64.b64encode\\(b'School-1059'\\).decode\\(\\)\\)\")",
       "Bash(python -)",
       "Bash(python -c \"import json; d=json.load\\(open\\('courses.json'\\)\\); print\\(len\\(d\\), 'courses'\\); print\\(d[:5]\\)\")",
-      "Bash(timeout 15 cat \"C:/Users/forfl/AppData/Local/Temp/claude/C--Users-forfl-Documents-trojanscheduler/2fd5ba31-522b-4415-a487-98910bf65b1e/tasks/b357pcaln.output\")"
+      "Bash(timeout 15 cat \"C:/Users/forfl/AppData/Local/Temp/claude/C--Users-forfl-Documents-trojanscheduler/2fd5ba31-522b-4415-a487-98910bf65b1e/tasks/b357pcaln.output\")",
+      "Bash(python -c \"import solver; import main; print\\('OK'\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(python -c \"import main; print\\('OK'\\)\")"
     ]
   }
 }
