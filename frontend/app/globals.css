@@ -170,22 +170,6 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 1px 4px rgba(153, 0, 0, 0.30);
 }
 
-/* Form step: main config card (no hover lift) */
-.form-main-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  box-shadow: var(--shadow-card);
-}
-
-/* Step 1 compact: denser inputs inside the card */
-.form-step-compact .form-main-card input[type="text"]:not(.form-add-input),
-.form-step-compact .form-main-card select {
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
-}
-
 /* Constraint sliders — cardinal fill track, white thumb with red ring */
 input[type="range"].form-constraint-range {
   --fill-percent: 50%;

@@ -619,6 +619,62 @@ function DeptCourseSearchInput({
   )
 }
 
+function LeftPanel({ currentStep = 1 }: { currentStep?: number }) {
+  const steps = [
+    { num: 1, label: "Add your courses & constraints" },
+    { num: 2, label: "Build 3 optimal schedules" },
+    { num: 3, label: "Review & export" },
+  ]
+  return (
+    <div style={{
+      position: "fixed", left: 0, top: 0, bottom: 0, width: "22.222%",
+      background: "linear-gradient(170deg, #3d0000 0%, #6B0000 45%, #990000 100%)",
+      display: "flex", flexDirection: "column", padding: "40px 28px", zIndex: 10,
+    }}>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", color: "rgba(255,204,0,0.75)", textTransform: "uppercase", marginBottom: 14 }}>
+          USC · Fall 2026
+        </p>
+        <h1 style={{ fontFamily: "'DM Serif Display', serif", color: "#fff", fontSize: 30, lineHeight: 1.1, marginBottom: 12 }}>
+          Trojan<br />Scheduler
+        </h1>
+        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.6, maxWidth: 160 }}>
+          Build the perfect USC schedule in seconds.
+        </p>
+      </div>
+      <div>
+        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.3)", textTransform: "uppercase", marginBottom: 20 }}>
+          How it works
+        </p>
+        {steps.map(({ num, label }, i) => {
+          const active = num === currentStep
+          return (
+            <div key={num} style={{
+              display: "flex", alignItems: "flex-start", gap: 12,
+              paddingTop: i > 0 ? 16 : 0, marginTop: i > 0 ? 16 : 0,
+              borderTop: i > 0 ? "1px solid rgba(255,255,255,0.08)" : "none",
+            }}>
+              <div style={{
+                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                border: active ? "2px solid rgba(255,204,0,0.75)" : "2px solid rgba(255,255,255,0.2)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: active ? "rgba(255,204,0,0.1)" : "transparent", marginTop: 1,
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: active ? "rgba(255,204,0,0.9)" : "rgba(255,255,255,0.3)" }}>
+                  {num}
+                </span>
+              </div>
+              <span style={{ fontSize: 13, lineHeight: 1.5, paddingTop: 4, color: active ? "#fff" : "rgba(255,255,255,0.3)", fontWeight: active ? 500 : 400 }}>
+                {label}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function InputForm({
   onSubmit,
   error,
@@ -735,80 +791,63 @@ export default function InputForm({
 
   if (discussionPromptCourse) {
     return (
-      <div className="form-step-compact mx-auto w-full max-w-[26rem] sm:max-w-[28rem] px-4 py-8">
-        <div className="form-main-card p-4">
-          <div
-            className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-5"
-            style={{ backgroundColor: "rgba(153,0,0,0.08)", border: "1px solid rgba(153,0,0,0.15)" }}
-          >
-            <span className="text-2xl">🗓</span>
-          </div>
-          <h3
-            className="text-xl text-center mb-2 font-semibold"
-            style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)" }}
-          >
-            Select a Discussion Section
-          </h3>
-          <p className="text-center text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
-            <span className="font-semibold" style={{ color: "var(--cardinal)" }}>
-              {discussionPromptCourse}
-            </span>{" "}
-            has multiple discussion sections. Choose the time that works best for you.
-          </p>
-          <div className="space-y-2">
-            {discussionOptions.map((opt) => {
-              const isFull = opt.seats_available === 0
-              const pctRemaining = opt.total_seats > 0 ? opt.seats_available / opt.total_seats : 0
-              // Seat fill gradient: white at ≥70% remaining → red at 0%
-              const t = Math.min(1, pctRemaining / 0.7)
-              const g = Math.round(255 * t)
-              const b = Math.round(255 * t)
-              const bgColor = `rgba(255,${g},${b},0.10)`
-              const borderColor = isFull
-                ? "rgba(153,0,0,0.55)"
-                : pctRemaining < 0.3
-                ? "rgba(153,0,0,0.35)"
-                : "var(--border-default)"
-
-              return (
-                <button
-                  key={opt.section_id}
-                  onClick={() =>
-                    onDiscussionPreference({ [discussionPromptCourse]: opt.section_id })
-                  }
-                  className="w-full text-left px-4 py-3 rounded-xl transition-all"
-                  style={{ border: `1.5px solid ${borderColor}`, backgroundColor: bgColor, color: "var(--text-primary)" }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = "var(--cardinal)"
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = borderColor
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm">
-                      {opt.days.join(" / ")} · {formatTime(opt.start_time)} – {formatTime(opt.end_time)}
-                    </span>
-                    <span
-                      className="text-xs font-semibold shrink-0"
-                      style={{ color: isFull ? "var(--cardinal)" : pctRemaining < 0.3 ? "var(--cardinal)" : "var(--text-tertiary)" }}
-                    >
-                      {isFull ? "Full" : `${opt.seats_available} / ${opt.total_seats}`}
-                    </span>
-                  </div>
-                  {opt.location && (
-                    <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-                      {opt.location}
-                    </p>
-                  )}
-                </button>
-              )
-            })}
-            {discussionOptions.length === 0 && (
-              <p className="text-center py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>
-                No discussion options available.
+      <div style={{ display: "flex", minHeight: "100vh" }}>
+        <LeftPanel currentStep={1} />
+        <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)", display: "flex", alignItems: "center", justifyContent: "center", padding: "48px" }}>
+          <div style={{ maxWidth: 480, width: "100%" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: "rgba(153,0,0,0.08)", border: "1px solid rgba(153,0,0,0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+                <span style={{ fontSize: 24 }}>🗓</span>
+              </div>
+              <h3 style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)", fontSize: 22, marginBottom: 8 }}>
+                Select a Discussion Section
+              </h3>
+              <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6 }}>
+                <span style={{ fontWeight: 600, color: "var(--cardinal)" }}>{discussionPromptCourse}</span>{" "}
+                has multiple discussion sections. Choose the time that works best for you.
               </p>
-            )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {discussionOptions.map((opt) => {
+                const isFull = opt.seats_available === 0
+                const pctRemaining = opt.total_seats > 0 ? opt.seats_available / opt.total_seats : 0
+                const t = Math.min(1, pctRemaining / 0.7)
+                const g = Math.round(255 * t)
+                const b = Math.round(255 * t)
+                const bgColor = `rgba(255,${g},${b},0.10)`
+                const borderColor = isFull
+                  ? "rgba(153,0,0,0.55)"
+                  : pctRemaining < 0.3
+                  ? "rgba(153,0,0,0.35)"
+                  : "var(--border-default)"
+                return (
+                  <button
+                    key={opt.section_id}
+                    onClick={() => onDiscussionPreference({ [discussionPromptCourse]: opt.section_id })}
+                    style={{ width: "100%", textAlign: "left", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${borderColor}`, backgroundColor: bgColor, color: "var(--text-primary)", cursor: "pointer", transition: "border-color 0.15s" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--cardinal)" }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = borderColor }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontWeight: 500, fontSize: 14 }}>
+                        {opt.days.join(" / ")} · {formatTime(opt.start_time)} – {formatTime(opt.end_time)}
+                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 600, flexShrink: 0, color: isFull ? "var(--cardinal)" : pctRemaining < 0.3 ? "var(--cardinal)" : "var(--text-tertiary)" }}>
+                        {isFull ? "Full" : `${opt.seats_available} / ${opt.total_seats}`}
+                      </span>
+                    </div>
+                    {opt.location && (
+                      <p style={{ fontSize: 12, marginTop: 2, color: "var(--text-tertiary)" }}>{opt.location}</p>
+                    )}
+                  </button>
+                )
+              })}
+              {discussionOptions.length === 0 && (
+                <p style={{ textAlign: "center", padding: "24px 0", fontSize: 14, color: "var(--text-tertiary)" }}>
+                  No discussion options available.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -820,270 +859,259 @@ export default function InputForm({
   const fillUnits = ((constraints.max_units - 8) / 12) * 100
 
   return (
-    <div className="form-step-compact mx-auto w-full max-w-[26rem] sm:max-w-[28rem] px-4 py-3 sm:py-4">
+    <div style={{ display: "flex", minHeight: "100vh" }}>
 
-      <header className="text-center mb-3">
-        <h1
-          className="text-2xl sm:text-3xl font-bold mb-1 tracking-tight"
-          style={{ fontFamily: "'DM Serif Display', serif", color: "var(--cardinal)" }}
-        >
-          Trojan Scheduler
-        </h1>
-        <p className="text-xs mx-auto leading-snug max-w-[24rem]" style={{ color: "var(--text-secondary)" }}>
-          Build the perfect USC schedule in seconds. We balance time constraints, GE requirements, and
-          RateMyProfessor scores so you don&apos;t have to.
-        </p>
-        <p className="text-[11px] mt-1.5 font-medium tracking-wide" style={{ color: "var(--text-tertiary)" }}>
-          Step 1 of 3 · Preferences
-        </p>
-      </header>
+      <LeftPanel currentStep={1} />
 
-      {error && (
-        <div
-          className="mb-2 px-3 py-2 rounded-lg text-xs"
-          style={{ backgroundColor: "rgba(153,0,0,0.06)", border: "1px solid rgba(153,0,0,0.20)", color: "var(--cardinal)" }}
-        >
-          {error}
-        </div>
-      )}
+      <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
+        <div style={{ maxWidth: 860, margin: "0 auto", padding: "32px 56px 80px" }}>
 
-      <div className="form-main-card p-4 space-y-0">
-
-        {/* Required courses */}
-        <section className="pb-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <h2 className="text-[13px] font-bold tracking-tight" style={{ color: "var(--text-primary)", fontFamily: "Inter, sans-serif" }}>
-              Required courses
-            </h2>
-            <span className="text-[11px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-              {mustHaves.length}/6
-            </span>
-          </div>
-          <CourseEntryBlock
-            entries={mustHaves}
-            setEntries={setMustHaves}
-            draft={draftMust}
-            setDraft={setDraftMust}
-            editingId={editingMustId}
-            setEditingId={setEditingMustId}
-            maxEntries={6}
-            draftPlaceholder="Add a course or GE requirement…"
-            onCommitDraft={commitDraftMust}
-            onCommitCode={commitCodeMust}
-            onCommitGE={commitGEMust}
-            updateEntry={updateEntry}
-            removeEntry={(list, setList, id) =>
-              deleteEntryAndClearEdit(list, setList, id, setEditingMustId, editingMustId)
-            }
-          />
-        </section>
-
-        <div className="h-px w-full" style={{ backgroundColor: "var(--border-subtle)" }} />
-
-        {/* Optional courses */}
-        <section className="py-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <h2 className="text-[13px] font-bold tracking-tight" style={{ color: "var(--text-primary)", fontFamily: "Inter, sans-serif" }}>
-              Optional courses
-            </h2>
-            <span className="text-[11px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-              {niceToHaves.length}/4
-            </span>
-          </div>
-          {niceToHaves.filter(entryFilled).length === 0 &&
-            !niceToHaves.some((e) => !entryFilled(e)) &&
-            editingNiceId === null && (
-            <p className="text-xs italic mb-1.5" style={{ color: "var(--text-tertiary)" }}>
-              No entries yet.
-            </p>
+          {error && (
+            <div style={{ marginBottom: 28, padding: "12px 16px", borderRadius: 10, backgroundColor: "rgba(153,0,0,0.06)", border: "1px solid rgba(153,0,0,0.20)", color: "var(--cardinal)", fontSize: 13 }}>
+              {error}
+            </div>
           )}
-          <CourseEntryBlock
-            entries={niceToHaves}
-            setEntries={setNiceToHaves}
-            draft={draftNice}
-            setDraft={setDraftNice}
-            editingId={editingNiceId}
-            setEditingId={setEditingNiceId}
-            maxEntries={4}
-            draftPlaceholder="Add an optional course or GE…"
-            onCommitDraft={commitDraftNice}
-            onCommitCode={commitCodeNice}
-            onCommitGE={commitGENice}
-            updateEntry={updateEntry}
-            removeEntry={(list, setList, id) =>
-              deleteEntryAndClearEdit(list, setList, id, setEditingNiceId, editingNiceId)
-            }
-          />
-        </section>
 
-        <div className="h-px w-full my-0" style={{ backgroundColor: "var(--border-subtle)" }} />
-
-        {/* Hard constraints */}
-        <section className="pt-3 space-y-2">
-          <h2 className="text-[13px] font-bold tracking-tight mb-0.5" style={{ color: "var(--text-primary)", fontFamily: "Inter, sans-serif" }}>
-            Class window
-          </h2>
-
-          <div className="pt-0.5">
-            <DualTimeRangeSlider
-              earliestIdx={earliestIdx}
-              latestIdx={latestIdx}
-              onChange={applyTimeRangeIndices}
-            />
-            <div className="flex justify-between mt-0.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-              <span>Earliest start</span>
-              <span>Latest end</span>
+          {/* Required courses */}
+          <section style={{ marginBottom: 28 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+                Required courses
+              </h2>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{mustHaves.length}/6</span>
             </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-0.5">
-              <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>Max units</span>
-              <span className="text-xs font-bold tabular-nums" style={{ color: "var(--cardinal)" }}>
-                {constraints.max_units}
-              </span>
-            </div>
-            <input
-              type="range"
-              className="form-constraint-range"
-              min={8}
-              max={20}
-              step={1}
-              value={constraints.max_units}
-              onChange={(e) => setConstraints((c) => ({ ...c, max_units: Number(e.target.value) }))}
-              style={{ ["--fill-percent" as string]: `${fillUnits}%` }}
-            />
-            <div className="flex justify-between text-[11px] mt-0.5 leading-none" style={{ color: "var(--text-tertiary)" }}>
-              <span>8</span>
-              <span>20</span>
-            </div>
-          </div>
-
-          <div
-            className="form-toggle-box flex items-center justify-between gap-2 cursor-pointer"
-            onClick={() => {
-              setShowDaysOff((v) => {
-                const next = !v
-                if (v) setConstraints((c) => ({ ...c, days_off: [] }))
-                return next
-              })
-            }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault()
-                setShowDaysOff((v) => {
-                  if (v) setConstraints((c) => ({ ...c, days_off: [] }))
-                  return !v
-                })
+            <CourseEntryBlock
+              entries={mustHaves}
+              setEntries={setMustHaves}
+              draft={draftMust}
+              setDraft={setDraftMust}
+              editingId={editingMustId}
+              setEditingId={setEditingMustId}
+              maxEntries={6}
+              draftPlaceholder="Add a course or GE requirement…"
+              onCommitDraft={commitDraftMust}
+              onCommitCode={commitCodeMust}
+              onCommitGE={commitGEMust}
+              updateEntry={updateEntry}
+              removeEntry={(list, setList, id) =>
+                deleteEntryAndClearEdit(list, setList, id, setEditingMustId, editingMustId)
               }
-            }}
-          >
-            <div>
-              <p className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>Days off</p>
-              <p className="text-[11px] mt-0 leading-snug" style={{ color: "var(--text-tertiary)" }}>
-                Pick days you want completely free
+            />
+          </section>
+
+          <div style={{ height: 1, background: "var(--border-subtle)", marginBottom: 28 }} />
+
+          {/* Optional courses */}
+          <section style={{ marginBottom: 28 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+                Optional courses
+              </h2>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{niceToHaves.length}/4</span>
+            </div>
+            {niceToHaves.filter(entryFilled).length === 0 &&
+              !niceToHaves.some((e) => !entryFilled(e)) &&
+              editingNiceId === null && (
+              <p style={{ fontSize: 13, color: "var(--text-tertiary)", fontStyle: "italic", marginBottom: 12 }}>
+                No entries yet.
               </p>
+            )}
+            <CourseEntryBlock
+              entries={niceToHaves}
+              setEntries={setNiceToHaves}
+              draft={draftNice}
+              setDraft={setDraftNice}
+              editingId={editingNiceId}
+              setEditingId={setEditingNiceId}
+              maxEntries={4}
+              draftPlaceholder="Add an optional course or GE…"
+              onCommitDraft={commitDraftNice}
+              onCommitCode={commitCodeNice}
+              onCommitGE={commitGENice}
+              updateEntry={updateEntry}
+              removeEntry={(list, setList, id) =>
+                deleteEntryAndClearEdit(list, setList, id, setEditingNiceId, editingNiceId)
+              }
+            />
+          </section>
+
+          <div style={{ height: 1, background: "var(--border-subtle)", marginBottom: 28 }} />
+
+          {/* Class window */}
+          <section style={{ marginBottom: 28 }}>
+            <h2 style={{ margin: "0 0 20px", fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+              Class window
+            </h2>
+
+            <div style={{ marginBottom: 24 }}>
+              <DualTimeRangeSlider
+                earliestIdx={earliestIdx}
+                latestIdx={latestIdx}
+                onChange={applyTimeRangeIndices}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 11, color: "var(--text-tertiary)" }}>
+                <span>Earliest start</span>
+                <span>Latest end</span>
+              </div>
             </div>
-            <div
-              className="toggle shrink-0 pointer-events-none"
-              style={{ backgroundColor: showDaysOff ? "var(--cardinal)" : "var(--border-default)" }}
-            >
-              <div className="toggle-thumb" style={{ transform: showDaysOff ? "translateX(18px)" : "translateX(0)" }} />
+
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>Max units</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--cardinal)" }}>{constraints.max_units}</span>
+              </div>
+              <input
+                type="range"
+                className="form-constraint-range"
+                min={8}
+                max={20}
+                step={1}
+                value={constraints.max_units}
+                onChange={(e) => setConstraints((c) => ({ ...c, max_units: Number(e.target.value) }))}
+                style={{ ["--fill-percent" as string]: `${fillUnits}%` }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 11, color: "var(--text-tertiary)" }}>
+                <span>8</span>
+                <span>20</span>
+              </div>
             </div>
-          </div>
-          {showDaysOff && (
-            <div className="-mt-1 mb-0.5" onClick={(e) => e.stopPropagation()}>
-              <select
-                value={constraints.days_off[0] ?? ""}
-                onChange={(e) =>
-                  setConstraints((c) => ({ ...c, days_off: e.target.value ? [e.target.value] : [] }))
-                }
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div
+                className="form-toggle-box flex items-center justify-between gap-2 cursor-pointer"
+                onClick={() => {
+                  setShowDaysOff((v) => {
+                    const next = !v
+                    if (v) setConstraints((c) => ({ ...c, days_off: [] }))
+                    return next
+                  })
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    setShowDaysOff((v) => {
+                      if (v) setConstraints((c) => ({ ...c, days_off: [] }))
+                      return !v
+                    })
+                  }
+                }}
               >
-                <option value="">Select a day…</option>
-                {[
-                  { value: "Mon", label: "Monday" },
-                  { value: "Tue", label: "Tuesday" },
-                  { value: "Wed", label: "Wednesday" },
-                  { value: "Thu", label: "Thursday" },
-                  { value: "Fri", label: "Friday" },
-                ].map(({ value, label }) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Days off</p>
+                  <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>Pick days you want completely free</p>
+                </div>
+                <div className="toggle shrink-0 pointer-events-none" style={{ backgroundColor: showDaysOff ? "var(--cardinal)" : "var(--border-default)" }}>
+                  <div className="toggle-thumb" style={{ transform: showDaysOff ? "translateX(18px)" : "translateX(0)" }} />
+                </div>
+              </div>
+              {showDaysOff && (
+                <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  {[
+                    { value: "Mon", label: "Monday" },
+                    { value: "Tue", label: "Tuesday" },
+                    { value: "Wed", label: "Wednesday" },
+                    { value: "Thu", label: "Thursday" },
+                    { value: "Fri", label: "Friday" },
+                  ].map(({ value, label }) => {
+                    const isSelected = constraints.days_off.includes(value)
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`form-pill${isSelected ? " is-active" : ""}`}
+                        style={{ paddingRight: 10, color: isSelected ? "var(--cardinal)" : undefined }}
+                        onClick={() =>
+                          setConstraints((c) => ({
+                            ...c,
+                            days_off: isSelected
+                              ? c.days_off.filter((d) => d !== value)
+                              : [...c.days_off, value],
+                          }))
+                        }
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              <div
+                className="form-toggle-box flex items-center justify-between gap-2 cursor-pointer"
+                onClick={() => setConstraints((c) => ({ ...c, no_back_to_back: !c.no_back_to_back }))}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    setConstraints((c) => ({ ...c, no_back_to_back: !c.no_back_to_back }))
+                  }
+                }}
+              >
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>No back-to-back</p>
+                  <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>Require gaps between classes</p>
+                </div>
+                <div className="toggle shrink-0 pointer-events-none" style={{ backgroundColor: constraints.no_back_to_back ? "var(--cardinal)" : "var(--border-default)" }}>
+                  <div className="toggle-thumb" style={{ transform: constraints.no_back_to_back ? "translateX(18px)" : "translateX(0)" }} />
+                </div>
+              </div>
             </div>
-          )}
+          </section>
 
-          <div
-            className="form-toggle-box flex items-center justify-between gap-2 cursor-pointer"
-            onClick={() => setConstraints((c) => ({ ...c, no_back_to_back: !c.no_back_to_back }))}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault()
-                setConstraints((c) => ({ ...c, no_back_to_back: !c.no_back_to_back }))
-              }
-            }}
-          >
-            <div>
-              <p className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>No back-to-back</p>
-              <p className="text-[11px] mt-0 leading-snug" style={{ color: "var(--text-tertiary)" }}>
-                Require gaps between classes
-              </p>
-            </div>
-            <div
-              className="toggle shrink-0 pointer-events-none"
-              style={{ backgroundColor: constraints.no_back_to_back ? "var(--cardinal)" : "var(--border-default)" }}
+          <div style={{ height: 1, background: "var(--border-subtle)", marginBottom: 28 }} />
+
+          {/* Fine-tune rankings */}
+          <section>
+            <button
+              type="button"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: 0, border: "none", background: "transparent", cursor: "pointer" }}
+              onClick={() => setRankingsOpen((o) => !o)}
+              aria-expanded={rankingsOpen}
             >
-              <div className="toggle-thumb" style={{ transform: constraints.no_back_to_back ? "translateX(18px)" : "translateX(0)" }} />
-            </div>
+              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+                Fine-tune rankings
+              </h2>
+              <span className={`form-disclosure-chevron ${rankingsOpen ? "is-open" : ""}`} aria-hidden>
+                <ChevronDownIcon />
+              </span>
+            </button>
+            {rankingsOpen && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingTop: 20 }}>
+                <SliderRow
+                  label="Professor Quality"
+                  hint="Prioritizes sections with higher RateMyProfessor scores"
+                  value={profSlider}
+                  onChange={setProfSlider}
+                  leftLabel="Less important"
+                  rightLabel="Top priority"
+                />
+                <div style={{ height: 1, background: "var(--border-subtle)" }} />
+                <SliderRow
+                  label="Schedule Convenience"
+                  hint="Prioritizes fewer campus days and less time between classes"
+                  value={convSlider}
+                  onChange={setConvSlider}
+                  leftLabel="Less important"
+                  rightLabel="Top priority"
+                />
+              </div>
+            )}
+          </section>
+
+        </div>
+
+        <div style={{ position: "fixed", bottom: 0, left: "22.222%", right: 0, zIndex: 50, background: "var(--bg-page)", borderTop: "1px solid var(--border-subtle)", padding: "14px 56px" }}>
+          <div style={{ maxWidth: 860, margin: "0 auto" }}>
+            <button type="button" onClick={handleSubmit} className="btn-primary w-full py-3 text-sm gap-2 rounded-xl">
+              <SparkleIcon />
+              Build My Schedule
+            </button>
           </div>
-        </section>
-
-        <div className="h-px w-full" style={{ backgroundColor: "var(--border-subtle)" }} />
-
-        <section className="pt-1">
-          <button
-            type="button"
-            className="form-disclosure-btn"
-            onClick={() => setRankingsOpen((o) => !o)}
-            aria-expanded={rankingsOpen}
-          >
-            <span>Fine-tune rankings</span>
-            <span className={`form-disclosure-chevron ${rankingsOpen ? "is-open" : ""}`} aria-hidden>
-              <ChevronDownIcon />
-            </span>
-          </button>
-          {rankingsOpen && (
-            <div className="space-y-2 pt-1 pb-1">
-              <SliderRow
-                label="Professor Quality"
-                hint="Prioritizes sections with higher RateMyProfessor scores"
-                value={profSlider}
-                onChange={setProfSlider}
-                leftLabel="Less important"
-                rightLabel="Top priority"
-              />
-              <div className="h-px w-full my-0.5" style={{ backgroundColor: "var(--border-subtle)" }} />
-              <SliderRow
-                label="Schedule Convenience"
-                hint="Prioritizes fewer campus days and less time between classes"
-                value={convSlider}
-                onChange={setConvSlider}
-                leftLabel="Less important"
-                rightLabel="Top priority"
-              />
-            </div>
-          )}
-        </section>
+        </div>
       </div>
 
-      <button type="button" onClick={handleSubmit} className="btn-primary w-full py-2.5 text-sm mt-3 gap-2 rounded-xl">
-        <SparkleIcon />
-        Build My Schedule
-      </button>
     </div>
   )
 }
