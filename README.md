@@ -2,6 +2,8 @@
 
 USC course schedule optimizer. Add your courses, set your constraints, and get ranked schedule options with professor ratings built in.
 
+https://trojanscheduler.vercel.app/
+
 ## Features
 
 - Search any USC course by code or name, including GE requirements
