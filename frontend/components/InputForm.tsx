@@ -1,7 +1,9 @@
 "use client"
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -16,8 +18,17 @@ import {
   CourseInputEntry,
   DiscussionOption,
   GenerateRequest,
+  Term,
+  TermsResponse,
 } from "@/lib/types"
 import LeftPanel from "./LeftPanel"
+
+// Every course lookup in this form is term-specific. Carried by context rather
+// than prop-drilled: the lookups live in leaf components several levels below
+// the term picker, and widening each intermediate signature to pass it through
+// would touch far more of this file than the feature warrants.
+const TermContext = createContext<string>("")
+const useTermCode = () => useContext(TermContext)
 
 const GE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G", "H", "GESM"]
 
@@ -141,55 +152,84 @@ function pillLabel(e: Entry): string {
 
 // ── Course autocomplete ────────────────────────────────────────────────────────
 
-let _cachedCourses: { code: string; title: string; units?: number | null }[] | null = null
+// Course lists are per-term static files. Cached by term code so switching
+// back to a term already viewed doesn't refetch.
+type CourseList = { code: string; title: string; units?: number | null }[]
+const _cachedCourses: Record<string, CourseList> = {}
 
-function useCourses() {
-  const [courses, setCourses] = useState<{ code: string; title: string; units?: number | null }[]>(_cachedCourses ?? [])
+function useCourses(termCode: string) {
+  const [courses, setCourses] = useState<CourseList>(_cachedCourses[termCode] ?? [])
   useEffect(() => {
-    if (_cachedCourses !== null) { setCourses(_cachedCourses); return }
-    fetch("/courses.json")
-      .then((r) => r.json())
-      .then((data) => { _cachedCourses = data; setCourses(data) })
-      .catch(() => {})
-  }, [])
+    if (!termCode) { setCourses([]); return }
+    const cached = _cachedCourses[termCode]
+    if (cached) { setCourses(cached); return }
+    let cancelled = false
+    fetch(`/courses.${termCode}.json`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("missing"))))
+      .then((data: CourseList) => {
+        _cachedCourses[termCode] = data
+        if (!cancelled) setCourses(data)
+      })
+      // A term whose file hasn't been generated yet degrades to no
+      // autocomplete rather than breaking the form — the user can still type
+      // a course code and submit.
+      .catch(() => { if (!cancelled) setCourses([]) })
+    return () => { cancelled = true }
+  }, [termCode])
   return courses
 }
 
 // GE-tagged courses, keyed by category letter. Loaded once and cached.
 type GeCourseMap = Record<string, { code: string; title: string; units?: number | null }[]>
-let _cachedGeCourses: GeCourseMap | null = null
+const _cachedGeCourses: Record<string, GeCourseMap> = {}
 
-function useGeCourses() {
-  const [data, setData] = useState<GeCourseMap>(_cachedGeCourses ?? {})
+function useGeCourses(termCode: string) {
+  const [data, setData] = useState<GeCourseMap>(_cachedGeCourses[termCode] ?? {})
   useEffect(() => {
-    if (_cachedGeCourses !== null) { setData(_cachedGeCourses); return }
-    fetch("/ge_courses.json")
-      .then((r) => r.json())
-      .then((d: GeCourseMap) => { _cachedGeCourses = d; setData(d) })
-      .catch(() => {})
-  }, [])
+    if (!termCode) { setData({}); return }
+    const cached = _cachedGeCourses[termCode]
+    if (cached) { setData(cached); return }
+    let cancelled = false
+    fetch(`/ge_courses.${termCode}.json`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("missing"))))
+      .then((d: GeCourseMap) => {
+        _cachedGeCourses[termCode] = d
+        if (!cancelled) setData(d)
+      })
+      .catch(() => { if (!cancelled) setData({}) })
+    return () => { cancelled = true }
+  }, [termCode])
   return data
 }
 
 // ── Course options (professors + time slots) ───────────────────────────────────
 
+// Keyed by term AND course: the same course has different professors and time
+// slots each term, so a term-blind cache would show Fall's sections while the
+// user is building a Spring schedule.
 const _optionsCache: Record<string, CourseOptions> = {}
 
-function useCourseOptions(code: string) {
+function useCourseOptions(code: string, termCode: string) {
   const [options, setOptions] = useState<CourseOptions | null>(null)
   const [loading, setLoading] = useState(false)
   useEffect(() => {
-    const key = code.trim().toUpperCase()
-    if (!key) { setOptions(null); return }
+    const course = code.trim().toUpperCase()
+    if (!course || !termCode) { setOptions(null); return }
+    const key = `${termCode}:${course}`
     if (_optionsCache[key]) { setOptions(_optionsCache[key]); return }
     setLoading(true)
+    let cancelled = false
     const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
-    fetch(`${base}/course-options?code=${encodeURIComponent(key)}`)
+    fetch(`${base}/course-options?code=${encodeURIComponent(course)}&term=${encodeURIComponent(termCode)}`)
       .then((r) => r.json())
-      .then((data: CourseOptions) => { _optionsCache[key] = data; setOptions(data) })
-      .catch(() => setOptions({ professors: [], sections: [] }))
-      .finally(() => setLoading(false))
-  }, [code])
+      .then((data: CourseOptions) => {
+        _optionsCache[key] = data
+        if (!cancelled) setOptions(data)
+      })
+      .catch(() => { if (!cancelled) setOptions({ professors: [], sections: [] }) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [code, termCode])
   return { options, loading }
 }
 
@@ -464,8 +504,9 @@ function DeptCourseSearchInput({
   onCommitGE: (category: string, geCode?: string) => void
   placeholder: string
 }) {
-  const courses = useCourses()
-  const geCourses = useGeCourses()
+  const termCode = useTermCode()
+  const courses = useCourses(termCode)
+  const geCourses = useGeCourses(termCode)
   const [open, setOpen] = useState(false)
   const [geExpanded, setGeExpanded] = useState(false)
   // When set, the GE drill-down is showing the per-category course list
@@ -936,6 +977,24 @@ export default function InputForm({
   const [rankingsOpen, setRankingsOpen] = useState(false)
   const [planningMode, setPlanningMode] = useState(true)
   const [autoPickMode, setAutoPickMode] = useState(false)
+  const [terms, setTerms] = useState<Term[]>([])
+  // Empty until /terms answers. The backend owns both the active set and which
+  // one is default, so neither rule is duplicated here.
+  const [termCode, setTermCode] = useState("")
+
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
+    let cancelled = false
+    fetch(`${base}/terms`)
+      .then((r) => r.json())
+      .then((d: TermsResponse) => {
+        if (cancelled) return
+        setTerms(d.terms ?? [])
+        setTermCode(d.default ?? d.terms?.[0]?.term_code ?? "")
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const updateEntry = (
     list: Entry[],
@@ -983,6 +1042,7 @@ export default function InputForm({
       convenience_slider: convSlider,
       planning_mode: planningMode,
       auto_pick_mode: autoPickMode,
+      term_code: termCode || undefined,
     })
   }
 
@@ -1227,6 +1287,7 @@ export default function InputForm({
   const fillUnits = ((constraints.max_units - 8) / 12) * 100
 
   return (
+    <TermContext.Provider value={termCode}>
     <div style={{ display: "flex", minHeight: "100vh" }}>
 
       <LeftPanel currentStep={1} />
@@ -1236,6 +1297,39 @@ export default function InputForm({
 
           {/* Mode toggles — top right */}
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16, marginBottom: 20 }}>
+            {/* Term picker — sits with the global mode controls, not the form */}
+            {terms.length > 1 && (
+              <div className="flex items-center gap-2">
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", userSelect: "none" as const }}>
+                  Term
+                </span>
+                <select
+                  value={termCode}
+                  onChange={(e) => setTermCode(e.target.value)}
+                  aria-label="Select term"
+                  style={{
+                    appearance: "none" as const,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--cardinal)",
+                    background: "#FFFFFF",
+                    border: "1px solid var(--border-default)",
+                    borderRadius: 8,
+                    padding: "5px 26px 5px 10px",
+                    cursor: "pointer",
+                    backgroundImage:
+                      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>\")",
+                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: "right 9px center",
+                  }}
+                >
+                  {terms.map((t) => (
+                    <option key={t.term_code} value={t.term_code}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Auto Pick toggle */}
             <div className="flex items-center gap-2">
               <span style={{ fontSize: 12, fontWeight: 600, color: autoPickMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
@@ -1552,6 +1646,7 @@ export default function InputForm({
       </div>
 
     </div>
+    </TermContext.Provider>
   )
 }
 
@@ -1893,7 +1988,7 @@ function CourseDetailsSelectors({
   onProfessorChange: (prof: string) => void
   onSectionChange: (sid: string, prof: string) => void
 }) {
-  const { options, loading } = useCourseOptions(code)
+  const { options, loading } = useCourseOptions(code, useTermCode())
 
   const safeProf = professor ?? ""
   const safeSid = sectionId ?? ""
@@ -2046,7 +2141,7 @@ function GeCourseDropdown({
   value: string
   onChange: (code: string) => void
 }) {
-  const geCourses = useGeCourses()
+  const geCourses = useGeCourses(useTermCode())
   const list = geCourses[category] ?? []
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
