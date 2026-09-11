@@ -145,6 +145,17 @@ app.add_middleware(
 def health():
     return {"status": "ok", "departments_loaded": len(school_lookup)}
 
+@app.get("/terms")
+async def terms():
+    """
+    The terms USC currently has open for registration, newest first, plus which
+    one the app defaults to. The frontend renders this directly, so the ordering
+    and default rule live here rather than being duplicated client-side.
+    """
+    from terms import fetch_active_terms, default_term
+    active = await fetch_active_terms(http_client)
+    return {"terms": active, "default": default_term(active)}
+
 @app.get("/course-options")
 async def course_options(code: str):
     """
