@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import sys
 import traceback
+from datetime import date
 
 import terms
 from terms import (
     TermUnavailableError,
     clear_terms_cache,
+    current_term_code,
     default_term,
     fetch_active_terms,
     parse_term_code,
@@ -90,11 +92,42 @@ def test_active_terms_are_ordered_newest_first():
     assert codes == ["20263", "20262", "20261"], f"not sorted newest-first: {codes}"
 
 
-def test_default_term_is_the_highest_active_code():
-    clear_terms_cache()
-    client = FakeClient(LIVE_SHAPE)
-    result = run(fetch_active_terms(client))
-    assert default_term(result) == "20263"
+def test_default_is_the_next_term_after_the_one_in_session():
+    # Students register a term ahead: during Spring, the next thing to plan is
+    # Summer; during Summer, Fall.
+    terms = [{"term_code": c} for c in ["20263", "20262", "20261"]]
+    assert default_term(terms, date(2026, 3, 1)) == "20262", "in Spring, default to Summer"
+    assert default_term(terms, date(2026, 6, 15)) == "20263", "in Summer, default to Fall"
+
+
+def test_default_rolls_into_the_next_year():
+    # The case that motivated this: it is Fall 2026 and USC has opened
+    # Spring 2027, so that is what should be preselected.
+    terms = [{"term_code": c} for c in ["20271", "20263", "20262"]]
+    assert default_term(terms, date(2026, 10, 15)) == "20271"
+    assert default_term(terms, date(2026, 12, 20)) == "20271"
+
+
+def test_default_picks_the_earliest_upcoming_not_the_furthest():
+    # With both Summer and Fall open during Spring, the *next* one wins.
+    terms = [{"term_code": c} for c in ["20273", "20272", "20271"]]
+    assert default_term(terms, date(2027, 2, 1)) == "20272", "should be Summer, not Fall"
+
+
+def test_default_falls_back_when_no_later_term_is_published():
+    # Today's real situation: it is Fall 2026 and USC has no 2027 term at all,
+    # so the furthest-out active term is the only sensible preselection.
+    terms = [{"term_code": c} for c in ["20263", "20262", "20261"]]
+    assert default_term(terms, date(2026, 9, 11)) == "20263"
+
+
+def test_current_term_code_maps_months_to_seasons():
+    assert current_term_code(date(2026, 1, 15)) == "20261"
+    assert current_term_code(date(2026, 4, 30)) == "20261"
+    assert current_term_code(date(2026, 5, 1)) == "20262"
+    assert current_term_code(date(2026, 7, 31)) == "20262"
+    assert current_term_code(date(2026, 8, 1)) == "20263"
+    assert current_term_code(date(2026, 12, 31)) == "20263"
 
 
 def test_term_codes_map_to_readable_labels():
@@ -163,8 +196,10 @@ def test_empty_active_set_raises_when_cold():
 def test_resolve_term_defaults_when_omitted():
     clear_terms_cache()
     client = FakeClient(LIVE_SHAPE)
-    assert run(resolve_term(None, client)) == "20263"
-    assert run(resolve_term("", client)) == "20263"
+    # Pinned date so this does not drift as real time passes.
+    when = date(2026, 9, 11)
+    assert run(resolve_term(None, client, when)) == "20263"
+    assert run(resolve_term("", client, when)) == "20263"
 
 
 def test_resolve_term_accepts_an_active_non_default_term():
@@ -200,7 +235,11 @@ def test_resolve_term_rejects_malformed_input():
 TESTS = [
     test_only_active_terms_are_returned,
     test_active_terms_are_ordered_newest_first,
-    test_default_term_is_the_highest_active_code,
+    test_default_is_the_next_term_after_the_one_in_session,
+    test_default_rolls_into_the_next_year,
+    test_default_picks_the_earliest_upcoming_not_the_furthest,
+    test_default_falls_back_when_no_later_term_is_published,
+    test_current_term_code_maps_months_to_seasons,
     test_term_codes_map_to_readable_labels,
     test_malformed_term_codes_do_not_parse,
     test_repeat_call_inside_ttl_does_not_refetch,

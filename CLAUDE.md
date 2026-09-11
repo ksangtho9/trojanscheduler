@@ -75,8 +75,14 @@ returns 80+ terms; exactly the registerable ones carry `status: "Active"` (curre
 Term codes are `YYYY` + a season digit (`1`=Spring, `2`=Summer, `3`=Fall), so `20263` is Fall 2026.
 
 - The term is a **per-request parameter**, never a module constant. `/generate` takes an optional
-  `term_code`; omitting it uses the newest active term. An inactive term is a 400 naming the valid
-  terms — returning empty results instead would read to a student as "your constraints are too tight".
+  `term_code`; omitting it uses the default term. An inactive term is a 400 naming the valid terms —
+  returning empty results instead would read to a student as "your constraints are too tight".
+- **The default is the *next* term, not the newest.** Students register a term ahead, so during
+  Fall 2026 the thing being planned is Spring 2027. `default_term` picks the earliest active term
+  after the one currently in session, falling back to the furthest-out active term when USC has not
+  published a later one. This is the one place dates are used, and deliberately so: it only chooses
+  which term to preselect, and the picker overrides it, so a boundary that is off by a couple of
+  weeks costs one dropdown click. Which terms *exist* is still USC's `Active` set alone.
 - **The term is part of every cache key.** `_dept_cache` is keyed `TERM:SCHOOL:DEPT` and
   `lookup_section_in_cache` takes a term. Dropping the term from either silently serves one term's
   catalog for another, with plausible-looking sections and no error. `test_scraper.py` has tests

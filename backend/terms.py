@@ -19,6 +19,7 @@ Term codes are YYYY + a season digit: 20263 = Fall 2026.
 
 import os
 import time
+from datetime import date
 
 import httpx
 
@@ -123,15 +124,47 @@ async def fetch_active_terms(client: httpx.AsyncClient, force: bool = False) -> 
     return terms
 
 
-def default_term(terms: list[dict]) -> str:
+# Month → season digit. Registration is what matters here, not exact USC
+# academic-calendar boundaries: this only decides which active term to
+# PRESELECT, and the picker overrides it. A boundary that is off by a couple of
+# weeks costs the student one dropdown click. (Term *resolution* still never
+# uses dates — USC's Active set is the authority for which terms exist at all.)
+_SEASON_BY_MONTH = {
+    1: "1", 2: "1", 3: "1", 4: "1",        # Spring
+    5: "2", 6: "2", 7: "2",                # Summer
+    8: "3", 9: "3", 10: "3", 11: "3", 12: "3",  # Fall
+}
+
+
+def current_term_code(today: date | None = None) -> str:
+    """The term code for the semester currently in session."""
+    today = today or date.today()
+    return f"{today.year}{_SEASON_BY_MONTH[today.month]}"
+
+
+def default_term(terms: list[dict], today: date | None = None) -> str:
     """
-    The furthest-out active term — the one a student planning ahead is most
-    likely registering for. The picker makes the others reachable.
+    The term to preselect: the next one a student can actually register for.
+
+    Students register a term ahead — during Fall 2026 the thing being planned
+    is Spring 2027 — so the default is the earliest active term that starts
+    after the one currently in session, not simply the newest.
+
+    Falls back to the furthest-out active term when USC has not published a
+    later one yet. Today that means Fall 2026 is preselected because no 2027
+    term exists in their API; the default moves to Spring 2027 on its own the
+    moment USC opens it, with no code change.
+
+    Terms are newest-first, so the last match is the earliest one after now.
     """
+    current = current_term_code(today)
+    upcoming = [t["term_code"] for t in terms if t["term_code"] > current]
+    if upcoming:
+        return upcoming[-1]
     return terms[0]["term_code"]
 
 
-async def resolve_term(term_code, client: httpx.AsyncClient) -> str:
+async def resolve_term(term_code, client: httpx.AsyncClient, today: date | None = None) -> str:
     """
     Validate a caller-supplied term code against the active set, or return the
     default when none was supplied.
@@ -143,7 +176,7 @@ async def resolve_term(term_code, client: httpx.AsyncClient) -> str:
     """
     terms = await fetch_active_terms(client)
     if term_code is None or str(term_code).strip() == "":
-        return default_term(terms)
+        return default_term(terms, today)
 
     code = str(term_code).strip()
     if any(t["term_code"] == code for t in terms):
