@@ -16,6 +16,14 @@ load_dotenv()
 # unchanged. Enable with TROJAN_DEBUG_TIMING=1 (used by bench_generate.py).
 DEBUG_TIMING = os.getenv("TROJAN_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
 
+# Cap on how many candidate sections per GE category reach RMP + the solver.
+# GE pools span hundreds of professors; RMP and pair-expansion cost scale with
+# pool size, while the solver only ever returns a diversity-ranked top 3. Keeping
+# the best-by-seats-then-earliest N per category bounds that cost. Trade: a few
+# GE options never reach the solver — pressure-tested for top-3 stability in
+# test_solver.py. Set GE_POOL_CAP=0 to disable.
+GE_POOL_CAP = int(os.getenv("GE_POOL_CAP", "40"))
+
 from scraper import build_school_lookup, HTTP_HEADERS
 
 # --- Pydantic models ---
@@ -300,6 +308,11 @@ async def generate(req: GenerateRequest):
         for code, _, _ in [_resolve_entry(entry)]
         if code
     })
+    # Must-have course scraping stays blocking: it is cheap (a handful of depts,
+    # each a fast catalog fetch) and correctness matters — a must-have course
+    # must return its real sections on the first request, not an empty snapshot.
+    # The expensive, non-blocking snapshot treatment is reserved for the GE
+    # machinery below, which is where the multi-second cost actually lives.
     results = await asyncio.gather(*[
         scrape_course(code, http_client, school_lookup, term_code) for code in codes
     ])
@@ -423,7 +436,7 @@ async def generate(req: GenerateRequest):
                 requested_categories.extend(e.categories)
     requested_categories = list(set(requested_categories))
     raw_ge = await build_ge_candidates(
-        requested_categories, school_lookup, http_client, term_code
+        requested_categories, school_lookup, http_client, term_code, block_on_miss=False
     )
 
     ge_candidates = {
@@ -448,7 +461,8 @@ async def generate(req: GenerateRequest):
                 late_codes.add(found_code)
         if late_codes:
             late_results = await asyncio.gather(*[
-                scrape_course(c, http_client, school_lookup, term_code) for c in late_codes
+                scrape_course(c, http_client, school_lookup, term_code)
+                for c in late_codes
             ])
             for c, raw in zip(late_codes, late_results):
                 if c not in all_sections:
@@ -480,6 +494,19 @@ async def generate(req: GenerateRequest):
             slot: [s for s in secs if _passes_hard_filters(s)]
             for slot, secs in ge_candidates.items()
         }
+
+        # 4d. Cap each category to the top GE_POOL_CAP sections before RMP/solve.
+        # Rank by open seats (desc) then earliest start — a cheap proxy for what
+        # the solver scores highly — so the sections most likely to appear in the
+        # final top 3 are the ones kept. Skipped in planning_mode with the filter.
+        if GE_POOL_CAP > 0:
+            def _rank_key(s: Section):
+                return (-s.seats_available, s.start_time)
+
+            ge_candidates = {
+                slot: sorted(secs, key=_rank_key)[:GE_POOL_CAP]
+                for slot, secs in ge_candidates.items()
+            }
     _timing["ge_build_ms"] = round((_clock() - _t0) * 1000, 1)
 
     # 5. Enrich all sections with RMP data

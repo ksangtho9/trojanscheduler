@@ -229,6 +229,61 @@ def test_unknown_department_returns_empty():
     assert run(scrape_course("XXXX 100", client, {"CSCI": "ENGV"}, FALL)) == []
 
 
+# ---------------------------------------------------------------------------
+# Snapshot serving (U2): the /generate request path must read from the cache
+# snapshot and never block on a cold USC fetch.
+# ---------------------------------------------------------------------------
+
+def test_snapshot_fresh_hit_issues_no_http():
+    """A warm snapshot serves the request path with zero outbound HTTP."""
+    async def _run():
+        clear_dept_cache()
+        client = two_term_client()
+        lookup = {"CSCI": "ENGV"}
+        # Warm the snapshot via the blocking (warmer) path.
+        await scrape_course("CSCI 270", client, lookup, FALL, block_on_miss=True)
+        calls_before = len(client.calls)
+        res = await scrape_course("CSCI 270", client, lookup, FALL, block_on_miss=False)
+        assert len(client.calls) == calls_before, "fresh hit must not issue HTTP"
+        assert [s["section_id"] for s in res] == ["FALL-1"]
+    run(_run())
+
+
+def test_request_path_cold_miss_does_not_block_then_backfills():
+    """
+    block_on_miss=False returns [] immediately on a cold miss (no synchronous
+    fetch), and the scheduled background refresh warms the cache for next time.
+    """
+    async def _run():
+        clear_dept_cache()
+        client = two_term_client()
+        lookup = {"CSCI": "ENGV"}
+        res = await scrape_course("CSCI 270", client, lookup, FALL, block_on_miss=False)
+        assert res == [], "request path must not block-fetch on a cold miss"
+        await asyncio.sleep(0.05)  # let the background refresh run
+        res2 = await scrape_course("CSCI 270", client, lookup, FALL, block_on_miss=False)
+        assert [s["section_id"] for s in res2] == ["FALL-1"], "backfill should warm cache"
+    run(_run())
+
+
+def test_stale_entry_served_immediately_and_revalidated():
+    """A stale-but-present entry is returned at once and refreshed in the bg."""
+    async def _run():
+        clear_dept_cache()
+        client = two_term_client()
+        lookup = {"CSCI": "ENGV"}
+        await scrape_course("CSCI 270", client, lookup, FALL, block_on_miss=True)
+        key = scraper._cache_key(FALL, "ENGV", "CSCI")
+        _, courses = scraper._dept_cache[key]
+        scraper._dept_cache[key] = (0.0, courses)  # epoch 0 → definitely stale
+        calls_before = len(client.calls)
+        res = await scrape_course("CSCI 270", client, lookup, FALL, block_on_miss=False)
+        assert [s["section_id"] for s in res] == ["FALL-1"], "stale copy should be served"
+        await asyncio.sleep(0.05)
+        assert len(client.calls) > calls_before, "stale entry should revalidate in bg"
+    run(_run())
+
+
 TESTS = [
     test_combined_lecture_modes_count_as_primary,
     test_cancelled_sections_are_excluded,
@@ -243,6 +298,9 @@ TESTS = [
     test_clear_dept_cache_with_no_argument_drops_everything,
     test_no_module_level_term_constant_remains,
     test_unknown_department_returns_empty,
+    test_snapshot_fresh_hit_issues_no_http,
+    test_request_path_cold_miss_does_not_block_then_backfills,
+    test_stale_entry_served_immediately_and_revalidated,
 ]
 
 

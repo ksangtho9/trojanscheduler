@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import httpx
@@ -178,22 +179,85 @@ def _cache_key(term_code: str, school: str, dept: str) -> str:
     return f"{term_code}:{school}:{dept}"
 
 
-async def _get_dept_courses(
-    dept: str,
-    school: str,
-    client: httpx.AsyncClient,
-    term_code: str,
+# Cache keys with a background refresh currently in flight, so repeated misses
+# for the same dept don't stampede USC with duplicate fetches.
+_inflight_refreshes: set[str] = set()
+
+
+async def _fetch_dept_from_usc(
+    dept: str, school: str, client: httpx.AsyncClient, term_code: str
 ) -> list:
-    cache_key = _cache_key(term_code, school, dept)
-    entry = _dept_cache.get(cache_key)
-    if entry is not None and time.time() - entry[0] < DEPT_CACHE_TTL:
-        return entry[1]
     r = await client.get(
         f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
         params={"termCode": term_code, "school": school, "program": dept},
     )
     r.raise_for_status()
-    courses = r.json().get("courses") or []
+    return r.json().get("courses") or []
+
+
+async def _refresh_dept_bg(
+    cache_key: str, dept: str, school: str, client: httpx.AsyncClient, term_code: str
+) -> None:
+    """Background dept refresh: warms the cache without blocking any request."""
+    try:
+        courses = await _fetch_dept_from_usc(dept, school, client, term_code)
+        _dept_cache[cache_key] = (time.time(), courses)
+    except Exception:
+        pass
+    finally:
+        _inflight_refreshes.discard(cache_key)
+
+
+def _schedule_refresh(
+    cache_key: str, dept: str, school: str, client: httpx.AsyncClient, term_code: str
+) -> None:
+    if cache_key in _inflight_refreshes:
+        return
+    _inflight_refreshes.add(cache_key)
+    try:
+        asyncio.create_task(_refresh_dept_bg(cache_key, dept, school, client, term_code))
+    except RuntimeError:
+        # No running loop (e.g. a sync context); drop the reservation.
+        _inflight_refreshes.discard(cache_key)
+
+
+async def _get_dept_courses(
+    dept: str,
+    school: str,
+    client: httpx.AsyncClient,
+    term_code: str,
+    block_on_miss: bool = True,
+) -> list:
+    """
+    Return a department's catalog, treating the cache as an authoritative
+    snapshot for the request path.
+
+    - Fresh hit → return immediately.
+    - Stale but present → return the stale copy immediately and refresh in the
+      background (serve-stale-while-revalidate). A user never waits on a re-fetch
+      of data we already have.
+    - Cold (nothing cached):
+        - block_on_miss=True  (warmer / preview): fetch synchronously and cache.
+        - block_on_miss=False (request path): kick off a background fill and
+          return [] for this response — the next request serves it warm. This is
+          the snapshot trade: /generate never blocks on a cold USC fetch.
+    """
+    cache_key = _cache_key(term_code, school, dept)
+    entry = _dept_cache.get(cache_key)
+    now = time.time()
+
+    if entry is not None and now - entry[0] < DEPT_CACHE_TTL:
+        return entry[1]
+
+    if entry is not None:
+        _schedule_refresh(cache_key, dept, school, client, term_code)
+        return entry[1]
+
+    if not block_on_miss:
+        _schedule_refresh(cache_key, dept, school, client, term_code)
+        return []
+
+    courses = await _fetch_dept_from_usc(dept, school, client, term_code)
     _dept_cache[cache_key] = (time.time(), courses)
     return courses
 
@@ -203,10 +267,14 @@ async def scrape_course(
     client: httpx.AsyncClient,
     school_lookup: dict[str, str],
     term_code: str,
+    block_on_miss: bool = True,
 ) -> list[dict]:
     """
     Fetches all open sections for a given course code (e.g. "CSCI 270").
     Returns a list of primary-section dicts, each with a linked_sections list.
+
+    block_on_miss=False (the /generate request path) serves from the cache
+    snapshot and never blocks on a cold fetch — see _get_dept_courses.
     """
     parts = course_code.strip().upper().split()
     if len(parts) < 2:
@@ -217,7 +285,7 @@ async def scrape_course(
     if not school:
         return []
 
-    courses = await _get_dept_courses(dept, school, client, term_code)
+    courses = await _get_dept_courses(dept, school, client, term_code, block_on_miss)
     course = next((c for c in courses if c.get("classNumber") == number), None)
     if not course:
         return []
@@ -230,12 +298,16 @@ async def fetch_dept_courses(
     school: str,
     client: httpx.AsyncClient,
     term_code: str,
+    block_on_miss: bool = True,
 ) -> list:
     """
     Fetch all courses for a department, using the TTL cache.
     Ge_finder calls this to scan departments without double-fetching.
+
+    Defaults to blocking so the background warmer fully populates the snapshot;
+    the /generate request path passes block_on_miss=False.
     """
-    return await _get_dept_courses(dept, school, client, term_code)
+    return await _get_dept_courses(dept, school, client, term_code, block_on_miss)
 
 
 def clear_dept_cache(term_code: str | None = None) -> None:
