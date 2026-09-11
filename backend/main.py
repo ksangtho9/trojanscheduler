@@ -1,7 +1,8 @@
 import asyncio
 import re
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -9,6 +10,11 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# When set, /generate logs a per-phase timing breakdown to stdout and attaches
+# a `_timing` block to the response. Off by default so the response contract is
+# unchanged. Enable with TROJAN_DEBUG_TIMING=1 (used by bench_generate.py).
+DEBUG_TIMING = os.getenv("TROJAN_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
 
 from scraper import build_school_lookup, HTTP_HEADERS
 
@@ -39,6 +45,9 @@ class GenerateRequest(BaseModel):
     prof_slider: float = 0.5
     convenience_slider: float = 0.5
     planning_mode: bool = False
+    # Which USC term to schedule against. Omitted means "the default active
+    # term", which keeps older clients working unchanged.
+    term_code: str | None = None
     # course_code → {"lecture_section_id": ..., "discussion": ..., "lab": ..., "quiz": ...}
     linked_section_preferences: dict[str, dict[str, str]] | None = None
 
@@ -87,8 +96,36 @@ def _resolve_entry(entry: CourseInput) -> tuple[str | None, str | None, str | No
 # --- App state ---
 
 http_client: httpx.AsyncClient | None = None
-school_lookup: dict[str, str] = {}
+
+# Department→school mapping is term-specific, so it is held per term rather
+# than as one startup dict. Built lazily on first use of a term: warming all
+# active terms eagerly would triple cold-start latency for terms nobody asked
+# for. Keyed by term code.
+_school_lookups: dict[str, dict[str, str]] = {}
+_school_lookup_locks: dict[str, asyncio.Lock] = {}
 _ge_warmer_task: asyncio.Task | None = None
+
+
+async def get_school_lookup(term_code: str) -> dict[str, str]:
+    """
+    The department→school map for one term, built once and reused.
+
+    Guarded by a per-term lock so concurrent first requests for the same term
+    don't each pay for the (slow) lookup build.
+    """
+    cached = _school_lookups.get(term_code)
+    if cached:
+        return cached
+
+    lock = _school_lookup_locks.setdefault(term_code, asyncio.Lock())
+    async with lock:
+        cached = _school_lookups.get(term_code)
+        if cached:
+            return cached
+        lookup = await build_school_lookup(http_client, term_code)
+        _school_lookups[term_code] = lookup
+        print(f"School lookup ready for {term_code}: {len(lookup)} departments")
+        return lookup
 
 
 async def _ge_warmer_loop():
@@ -97,21 +134,40 @@ async def _ge_warmer_loop():
     TTL cadence so /generate requests with GE slots rarely hit cold fetches.
     fetch_dept_courses is a no-op for entries still within TTL, so each cycle
     only re-fetches catalogs that have actually expired.
+
+    Warms the default term first, then the other active terms: a request for
+    the term most students want should not queue behind warming for terms
+    nobody has asked for. A failure on one term never aborts the others.
     """
     from scraper import DEPT_CACHE_TTL
     from ge_finder import warm_ge_departments
+    from terms import fetch_active_terms, default_term
     while True:
         try:
-            n = await warm_ge_departments(school_lookup, http_client)
-            print(f"GE warm-up complete: {n} departments cached")
+            active = await fetch_active_terms(http_client)
+            ordered = sorted(
+                active,
+                key=lambda t: t["term_code"] != default_term(active),
+            )
         except Exception as e:
-            print(f"GE warm-up failed (will retry): {e}")
+            print(f"Term list unavailable, skipping GE warm-up cycle: {e}")
+            await asyncio.sleep(DEPT_CACHE_TTL)
+            continue
+
+        for term in ordered:
+            code = term["term_code"]
+            try:
+                lookup = await get_school_lookup(code)
+                n = await warm_ge_departments(lookup, http_client, code)
+                print(f"GE warm-up complete for {term['label']}: {n} departments cached")
+            except Exception as e:
+                print(f"GE warm-up failed for {term['label']} (will retry): {e}")
         await asyncio.sleep(DEPT_CACHE_TTL)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, school_lookup, _ge_warmer_task
+    global http_client, _ge_warmer_task
     # Generous read timeout: some USC department endpoints are very slow
     # (e.g. DSO's CoursesByTermSchoolProgram takes ~110s). A short timeout makes
     # those courses unusable in /generate and silently shrinks GE candidate pools.
@@ -120,8 +176,6 @@ async def lifespan(app: FastAPI):
         follow_redirects=True,
         timeout=httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=120.0),
     )
-    school_lookup = await build_school_lookup(http_client)
-    print(f"School lookup ready: {len(school_lookup)} departments")
     _ge_warmer_task = asyncio.create_task(_ge_warmer_loop())
     yield
     _ge_warmer_task.cancel()
@@ -141,9 +195,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def _resolve_term_or_400(term_code) -> str:
+    """
+    Validate a caller-supplied term, or fall back to the default active one.
+
+    An unrecognized term is a 400 rather than an empty result set: scraping a
+    dead term returns no sections, which would surface to the student as "no
+    schedules found" and read as "your constraints are too tight".
+    """
+    from terms import resolve_term, TermUnavailableError
+    try:
+        return await resolve_term(term_code, http_client)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except TermUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "departments_loaded": len(school_lookup)}
+    return {
+        "status": "ok",
+        "terms_loaded": sorted(_school_lookups),
+        "departments_loaded": {t: len(l) for t, l in _school_lookups.items()},
+    }
 
 @app.get("/terms")
 async def terms():
@@ -157,14 +232,16 @@ async def terms():
     return {"terms": active, "default": default_term(active)}
 
 @app.get("/course-options")
-async def course_options(code: str):
+async def course_options(code: str, term: str | None = None):
     """
     Returns the list of open lecture sections for a course code.
     Used by the frontend to populate professor and time slot dropdowns.
     Does not clear the dept cache — acts as a read-only preview.
     """
     from scraper import scrape_course
-    raw = await scrape_course(code.strip().upper(), http_client, school_lookup)
+    term_code = await _resolve_term_or_400(term)
+    school_lookup = await get_school_lookup(term_code)
+    raw = await scrape_course(code.strip().upper(), http_client, school_lookup, term_code)
 
     professors = sorted({
         s["professor"] for s in raw
@@ -199,11 +276,23 @@ async def generate(req: GenerateRequest):
         build_schedules,
     )
 
+    # Resolve and validate the term before any scraping: an invalid term must
+    # fail loudly here rather than quietly producing an empty catalog.
+    term_code = await _resolve_term_or_400(req.term_code)
+    school_lookup = await get_school_lookup(term_code)
+
     linked_prefs: dict[str, dict[str, str]] = {
         code: dict(prefs) for code, prefs in (req.linked_section_preferences or {}).items()
     }
 
+    # Per-phase timing (see DEBUG_TIMING). _clock is monotonic; each phase records
+    # its own wall-clock so the breakdown sums to ~total. Cheap; always collected.
+    _clock = time.perf_counter
+    _timing: dict[str, float] = {}
+    _req_start = _clock()
+
     # 1. Scrape sections for all course inputs in parallel (deduplicated by resolved code)
+    _t0 = _clock()
     codes = list({
         code
         for entry in req.must_haves + req.nice_to_haves
@@ -212,9 +301,10 @@ async def generate(req: GenerateRequest):
         if code
     })
     results = await asyncio.gather(*[
-        scrape_course(code, http_client, school_lookup) for code in codes
+        scrape_course(code, http_client, school_lookup, term_code) for code in codes
     ])
     scraped: dict[str, list] = dict(zip(codes, results))
+    _timing["scrape_ms"] = round((_clock() - _t0) * 1000, 1)
 
     # 2. Convert scraper dicts → solver Section dataclasses
     def _to_sections(course_code: str, raw: list) -> list[Section]:
@@ -322,6 +412,7 @@ async def generate(req: GenerateRequest):
     )
 
     # 4. Fetch GE candidate sections
+    _t0 = _clock()
     from ge_finder import build_ge_candidates
     requested_categories: list[str] = []
     for e in req.must_haves + req.nice_to_haves:
@@ -331,7 +422,9 @@ async def generate(req: GenerateRequest):
             if e.categories:
                 requested_categories.extend(e.categories)
     requested_categories = list(set(requested_categories))
-    raw_ge = await build_ge_candidates(requested_categories, school_lookup, http_client)
+    raw_ge = await build_ge_candidates(
+        requested_categories, school_lookup, http_client, term_code
+    )
 
     ge_candidates = {
         slot: _to_sections_with_ge(sections)
@@ -350,12 +443,12 @@ async def generate(req: GenerateRequest):
     if unresolved_ids:
         late_codes: set[str] = set()
         for _, sid in unresolved_ids:
-            found_code = lookup_section_in_cache(sid)
+            found_code = lookup_section_in_cache(sid, term_code)
             if found_code:
                 late_codes.add(found_code)
         if late_codes:
             late_results = await asyncio.gather(*[
-                scrape_course(c, http_client, school_lookup) for c in late_codes
+                scrape_course(c, http_client, school_lookup, term_code) for c in late_codes
             ])
             for c, raw in zip(late_codes, late_results):
                 if c not in all_sections:
@@ -387,14 +480,18 @@ async def generate(req: GenerateRequest):
             slot: [s for s in secs if _passes_hard_filters(s)]
             for slot, secs in ge_candidates.items()
         }
+    _timing["ge_build_ms"] = round((_clock() - _t0) * 1000, 1)
 
     # 5. Enrich all sections with RMP data
+    _t0 = _clock()
     from rmp import enrich_with_rmp
     combined = dict(all_sections)
     combined.update({slot: secs for slot, secs in ge_candidates.items()})
     await enrich_with_rmp(combined, http_client)
+    _timing["rmp_ms"] = round((_clock() - _t0) * 1000, 1)
 
     # 6. Run solver
+    _t0 = _clock()
     result = build_schedules(
         must_have_inputs=must_have_courses,
         ge_inputs=ge_inputs,
@@ -406,5 +503,17 @@ async def generate(req: GenerateRequest):
         convenience_slider=req.convenience_slider,
         planning_mode=req.planning_mode,
     )
+    _timing["solve_ms"] = round((_clock() - _t0) * 1000, 1)
+    _timing["total_ms"] = round((_clock() - _req_start) * 1000, 1)
+
+    print("generate timing: " + " ".join(f"{k}={v}" for k, v in _timing.items()))
+    if DEBUG_TIMING and isinstance(result, dict):
+        result = {**result, "_timing": _timing}
+
+    # Echo the term actually used so the frontend labels results with the
+    # resolved term rather than the one it believes it asked for.
+    if isinstance(result, dict):
+        from terms import term_label
+        result = {**result, "term_code": term_code, "term_label": term_label(term_code)}
 
     return result

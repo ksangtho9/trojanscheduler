@@ -21,11 +21,17 @@ Section dicts get two extra fields:
 import asyncio
 import httpx
 
-from scraper import BASE_URL, TERM_CODE, fetch_dept_courses, extract_sections
+from scraper import BASE_URL, fetch_dept_courses, extract_sections
 
 
 # Letter → (geRequirementPrefix, categoryPrefix) on USC's official map.
-# Source: /api/Ge/TermCode?termCode=20263 → Fall2015OrLater group.
+# Source: /api/Ge/TermCode → Fall2015OrLater group.
+#
+# Hardcoded rather than fetched because it does not vary by term: the
+# /api/Ge/TermCode response is byte-identical across every currently-active
+# term once the echoed termCode field is removed (verified 2026-09-11). If USC
+# ever revises the GE requirements for a future term, this map is what needs
+# revisiting — the category letters below are the app's own stable handles.
 # GESM (General Education Seminar) is exposed as its own category here so the
 # scheduler can treat it like A–H.
 CATEGORY_PREFIX_MAP: dict[str, tuple[str, str]] = {
@@ -50,6 +56,7 @@ def _normalize_cat(cat: str) -> str:
 async def fetch_ge_course_codes(
     category: str,
     client: httpx.AsyncClient,
+    term_code: str,
 ) -> list[str]:
     """
     Fetch every USC-approved course code for one GE category letter
@@ -66,7 +73,7 @@ async def fetch_ge_course_codes(
     r = await client.get(
         f"{BASE_URL}/Courses/GeCoursesByTerm",
         params={
-            "termCode": TERM_CODE,
+            "termCode": term_code,
             "geRequirementPrefix": req_prefix,
             "categoryPrefix": cat_prefix,
         },
@@ -88,6 +95,7 @@ async def fetch_ge_course_codes(
 async def warm_ge_departments(
     school_lookup: dict[str, str],
     client: httpx.AsyncClient,
+    term_code: str,
     concurrency: int = 16,
 ) -> int:
     """
@@ -96,7 +104,7 @@ async def warm_ge_departments(
     Returns the number of departments fetched (for logging).
     """
     code_lists = await asyncio.gather(*[
-        fetch_ge_course_codes(cat, client) for cat in CATEGORY_PREFIX_MAP
+        fetch_ge_course_codes(cat, client, term_code) for cat in CATEGORY_PREFIX_MAP
     ], return_exceptions=True)
 
     depts: set[str] = set()
@@ -116,7 +124,7 @@ async def warm_ge_departments(
             return
         async with semaphore:
             try:
-                await fetch_dept_courses(dept, school, client)
+                await fetch_dept_courses(dept, school, client, term_code)
             except Exception:
                 pass
 
@@ -128,6 +136,7 @@ async def build_ge_candidates(
     categories: list[str],
     school_lookup: dict[str, str],
     client: httpx.AsyncClient,
+    term_code: str,
     concurrency: int = 16,
 ) -> dict[str, list[dict]]:
     """
@@ -163,7 +172,7 @@ async def build_ge_candidates(
 
     # 1. Pull canonical course code lists in parallel
     code_lists = await asyncio.gather(*[
-        fetch_ge_course_codes(cat, client) for cat in requested
+        fetch_ge_course_codes(cat, client, term_code) for cat in requested
     ])
     cat_codes: dict[str, list[str]] = dict(zip(requested, code_lists))
 
@@ -191,7 +200,7 @@ async def build_ge_candidates(
             return []
         async with semaphore:
             try:
-                courses = await fetch_dept_courses(dept, school, client)
+                courses = await fetch_dept_courses(dept, school, client, term_code)
             except Exception:
                 return []
 
