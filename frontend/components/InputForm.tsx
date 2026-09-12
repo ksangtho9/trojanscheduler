@@ -978,21 +978,47 @@ export default function InputForm({
   const [planningMode, setPlanningMode] = useState(true)
   const [autoPickMode, setAutoPickMode] = useState(false)
   const [terms, setTerms] = useState<Term[]>([])
-  // Empty until /terms answers. The backend owns both the active set and which
-  // one is default, so neither rule is duplicated here.
+  // Empty until the term list resolves. The backend owns both the active set
+  // and which one is default, so neither rule is duplicated here.
   const [termCode, setTermCode] = useState("")
+  // "backend" = live list. "static" = backend unreachable, using the manifest
+  // shipped with this build. "failed" = neither answered.
+  const [termSource, setTermSource] = useState<"backend" | "static" | "failed" | null>(null)
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
     let cancelled = false
+
+    const apply = (d: TermsResponse, source: "backend" | "static") => {
+      if (cancelled) return false
+      const list = d?.terms ?? []
+      if (!list.length) return false
+      setTerms(list)
+      setTermCode(d.default ?? list[0].term_code)
+      setTermSource(source)
+      return true
+    }
+
+    const asJson = (r: Response) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+
+    // Live list first; fall back to the manifest built with this deploy.
+    // Without the fallback, a frontend that reaches a backend with no /terms
+    // yet ends up with no term at all, which disables course autocomplete
+    // entirely -- a silent, much worse failure than an out-of-date term list.
     fetch(`${base}/terms`)
-      .then((r) => r.json())
+      .then(asJson)
       .then((d: TermsResponse) => {
-        if (cancelled) return
-        setTerms(d.terms ?? [])
-        setTermCode(d.default ?? d.terms?.[0]?.term_code ?? "")
+        if (!apply(d, "backend")) throw new Error("empty term list")
       })
-      .catch(() => {})
+      .catch(() =>
+        fetch("/terms.json")
+          .then(asJson)
+          .then((d: TermsResponse) => {
+            if (!apply(d, "static")) throw new Error("empty manifest")
+          })
+          .catch(() => { if (!cancelled) setTermSource("failed") })
+      )
+
     return () => { cancelled = true }
   }, [])
 
@@ -1297,11 +1323,37 @@ export default function InputForm({
 
           {/* Mode toggles — top right */}
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16, marginBottom: 20 }}>
-            {/* Term picker — sits with the global mode controls, not the form */}
+            {/* Term picker — sits with the global mode controls, not the form.
+                Shown whenever any term resolved; a single-term list renders as
+                a static label rather than a dropdown with one option. */}
+            {termSource === "failed" && (
+              <div
+                title="The term list could not be loaded, so course search is unavailable. Check that the backend is reachable."
+                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "var(--cardinal)", cursor: "help" }}
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M8 4.5v4.5M8 11v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                Term unavailable
+              </div>
+            )}
+
+            {terms.length === 1 && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", userSelect: "none" as const }}>
+                Term <span style={{ color: "var(--cardinal)" }}>{terms[0].label}</span>
+              </span>
+            )}
+
             {terms.length > 1 && (
               <div className="flex items-center gap-2">
-                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", userSelect: "none" as const }}>
-                  Term
+                <span
+                  title={termSource === "static"
+                    ? "Backend unreachable — showing the term list bundled with this build, which may be out of date."
+                    : undefined}
+                  style={{ fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", userSelect: "none" as const, cursor: termSource === "static" ? "help" : undefined }}
+                >
+                  Term{termSource === "static" ? " *" : ""}
                 </span>
                 <select
                   value={termCode}

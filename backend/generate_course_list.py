@@ -25,13 +25,35 @@ from collections import Counter
 
 import httpx
 from scraper import build_school_lookup, HTTP_HEADERS, BASE_URL
-from terms import fetch_active_terms, term_label
+from terms import default_term, fetch_active_terms, term_label
 
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend", "public")
 
 
 def out_path(term_code: str) -> str:
     return os.path.join(PUBLIC_DIR, f"courses.{term_code}.json")
+
+
+MANIFEST_PATH = os.path.join(PUBLIC_DIR, "terms.json")
+
+
+def write_terms_manifest(active: list[dict]) -> None:
+    """
+    Mirror the active-term list into a static file shipped with the frontend.
+
+    The term picker normally reads GET /terms from the backend. This manifest is
+    its fallback: without it, a frontend deploy that reaches a backend without
+    /terms yet gets an empty term list, which silently disables course
+    autocomplete entirely. Shipping the list as a static asset means the
+    frontend degrades to "last known terms" instead of nothing, and removes the
+    requirement to deploy backend before frontend.
+
+    Same shape as GET /terms so the frontend parses one format either way.
+    """
+    payload = {"terms": active, "default": default_term(active)}
+    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+    print(f"Wrote term manifest: {MANIFEST_PATH}")
 MAX_RETRIES = 4
 # DSO's endpoint can take ~110s; give read plenty of headroom.
 TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=15.0, pool=180.0)
@@ -172,6 +194,9 @@ async def main():
             active = await fetch_active_terms(client)
             term_codes = [t["term_code"] for t in active]
             print(f"Active terms: {', '.join(term_label(c) for c in term_codes)}")
+            # Only refreshed on a full run: a --term run knows about one term
+            # and would otherwise narrow the manifest to it.
+            write_terms_manifest(active)
 
         # Sequential across terms for the same reason it is sequential across
         # departments: the USC API silently truncates under concurrent load.
