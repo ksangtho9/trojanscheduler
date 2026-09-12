@@ -153,7 +153,7 @@ async def generate_for_term(term_code: str, client: httpx.AsyncClient, force: bo
         json.dump(courses, f, separators=(",", ":"))
 
     print(f"\nWritten to {OUT_PATH}")
-
+    return True
 
 
 async def main():

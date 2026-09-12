@@ -29,6 +29,7 @@ python3 test_scraper.py            # term-scoped scraping + cache isolation
 python3 test_scraper.py --live     # smoke check against the real USC API
 python3 test_ge_finder.py          # term-scoped GE discovery
 python3 test_main_terms.py         # API-level term selection + validation
+python3 test_generate_course_list.py  # generator exit-status contract (the refresh workflow keys on it)
 
 # Frontend (port 3000)
 cd frontend
