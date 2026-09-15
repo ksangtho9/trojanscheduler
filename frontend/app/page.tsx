@@ -15,9 +15,10 @@ import {
   SwapState,
 } from "@/lib/types"
 
-// Keep the loading animation visible at least this long so it plays through,
-// even when the backend responds faster.
-const MIN_LOADING_MS = 4000
+// Small anti-flicker floor: keep the loading screen up just long enough to
+// avoid a flash when the backend is very fast, while otherwise reflecting true
+// backend latency (no artificial multi-second hold).
+const MIN_LOADING_MS = 600
 const waitForMinLoading = (start: number) =>
   new Promise<void>((r) => setTimeout(r, Math.max(0, MIN_LOADING_MS - (Date.now() - start))))
 
@@ -219,6 +220,11 @@ export default function Home() {
                 {stage === "results"
                   ? `${String(response.schedules.length).padStart(2, "0")} Options`
                   : "Selected"}
+                {response.term_label && (
+                  <span style={{ color: "var(--text-tertiary)" }}>
+                    {"  \u00B7  "}{response.term_label}
+                  </span>
+                )}
               </p>
               <h2
                 style={{

@@ -80,6 +80,9 @@ export interface GenerateRequest {
   prof_slider: number             // 0–1
   convenience_slider: number      // 0–1
   planning_mode?: boolean
+  // Which USC term to schedule against. Omitted means the backend's default
+  // active term. An inactive term is rejected with a 400, not an empty result.
+  term_code?: string
   auto_pick_mode?: boolean
   // Sent on second attempt if needs_linked_section_prompt was returned.
   // Shape: { course_code: { lecture_section_id, discussion, lab?, quiz? } }
@@ -184,9 +187,30 @@ export interface Schedule {
 // API response — what POST /generate returns
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Term — one USC term that is currently open for registration
+// ---------------------------------------------------------------------------
+
+export interface Term {
+  term_code: string               // e.g. "20263" — YYYY + season digit
+  label: string                   // e.g. "Fall 2026"
+  season: string                  // "Spring" | "Summer" | "Fall"
+  year: number
+}
+
+// What GET /terms returns. `default` is the term the app preselects.
+export interface TermsResponse {
+  terms: Term[]                   // active terms, newest first
+  default: string
+}
+
 export interface GenerateResponse {
   schedules: Schedule[]
   error: string | null
+  // The term the backend actually scheduled against, echoed back so results
+  // are labelled with the resolved term rather than the requested one.
+  term_code?: string
+  term_label?: string
   // Course code that still needs the user to pick a linked-section combo.
   needs_linked_section_prompt: string | null
   // Which linked-section type the user needs to choose right now. The backend

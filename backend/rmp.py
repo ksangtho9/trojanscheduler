@@ -13,6 +13,12 @@ from typing import Optional
 # Persisted to RMP_CACHE_PATH so it survives process restarts.
 _RMP_CACHE: dict[str, tuple[float, dict]] = {}
 _RMP_CACHE_TTL = float(os.getenv("RMP_CACHE_TTL", str(12 * 3600)))  # seconds, default 12h
+
+# Hard wall-clock budget for RMP enrichment on the request's critical path.
+# RMP affects ranking only, never feasibility, so any professor not resolved
+# within the budget falls back to neutral data for THIS response and is filled
+# into the cache by a detached background task so the next request is warm.
+_RMP_BUDGET_S = float(os.getenv("RMP_BUDGET_S", "2.5"))  # seconds
 _RMP_CACHE_PATH = os.getenv(
     "RMP_CACHE_PATH",
     os.path.join(os.path.dirname(__file__), ".rmp_cache.json"),
@@ -320,25 +326,89 @@ async def fetch_rmp_scores(
     return result
 
 
+def _apply_rmp(section, data: dict) -> None:
+    section.rmp_score         = data["rmp_score"]
+    section.rmp_difficulty    = data["rmp_difficulty"]
+    section.would_take_again  = data["would_take_again"]
+    section.rmp_total_ratings = data["rmp_total_ratings"]
+    section.rmp_profile_url   = data["rmp_profile_url"]
+    section.no_rmp_data        = data["no_rmp_data"]
+
+
+async def _backfill_rmp(names: list[str], client: httpx.AsyncClient, concurrency: int) -> None:
+    """
+    Finish resolving professors that missed the request budget and write them to
+    the cross-request cache, so the next request serves them instantly. Best
+    effort: never raises, only warms the cache.
+    """
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _one(name: str) -> None:
+        async with semaphore:
+            data = await fetch_rmp(name, client)
+        _RMP_CACHE[name] = (time.time(), data)
+
+    try:
+        await asyncio.gather(*[_one(n) for n in names], return_exceptions=True)
+        _save_rmp_cache()
+    except Exception:
+        pass
+
+
 async def enrich_with_rmp(
     all_sections: dict,
     client: httpx.AsyncClient,
     concurrency: int = 25,
+    budget_s: float | None = None,
 ) -> None:
     """
-    Mutates Section objects in place with RMP data.
-    all_sections: course_code -> list[Section]
+    Mutates Section objects in place with RMP data, bounded by a hard wall-clock
+    budget (default `_RMP_BUDGET_S`). Cached names are applied instantly; uncached
+    names are fetched only until the budget elapses. Names still unresolved when
+    the budget runs out get neutral `_no_data()` for this response and are filled
+    into the cache by a detached background task. RMP is ranking-only, so this
+    trades a slightly stale ranking on cold names for a bounded response time —
+    never schedule validity.
     """
+    if budget_s is None:
+        budget_s = _RMP_BUDGET_S
+
     flat = [s for sections in all_sections.values() for s in sections]
-    names = [s.professor for s in flat if s.professor not in ("TBA", "")]
+    unique_names = list({s.professor for s in flat if s.professor not in ("TBA", "")})
 
-    cache = await fetch_rmp_scores(names, client, concurrency)
+    now = time.time()
+    resolved: dict[str, dict] = {}
+    to_fetch: list[str] = []
+    for name in unique_names:
+        entry = _RMP_CACHE.get(name)
+        if entry is not None and now - entry[0] < _RMP_CACHE_TTL:
+            resolved[name] = entry[1]
+        else:
+            to_fetch.append(name)
 
+    # Fetch uncached names, but only until the budget elapses.
+    if to_fetch:
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _fetch_one(name: str) -> None:
+            async with semaphore:
+                data = await fetch_rmp(name, client)
+            resolved[name] = data
+            _RMP_CACHE[name] = (time.time(), data)
+
+        tasks = {asyncio.create_task(_fetch_one(n)): n for n in to_fetch}
+        done, pending = await asyncio.wait(tasks.keys(), timeout=budget_s)
+
+        if pending:
+            # Detach the stragglers as a background backfill; do NOT cancel them,
+            # they will warm the cache for the next request.
+            leftover = [tasks[t] for t in pending]
+            for t in pending:
+                t.cancel()
+            asyncio.create_task(_backfill_rmp(leftover, client, concurrency))
+        elif done:
+            _save_rmp_cache()
+
+    # Apply whatever resolved in time; everything else gets neutral data now.
     for section in flat:
-        data = cache.get(section.professor, _no_data())
-        section.rmp_score         = data["rmp_score"]
-        section.rmp_difficulty    = data["rmp_difficulty"]
-        section.would_take_again  = data["would_take_again"]
-        section.rmp_total_ratings = data["rmp_total_ratings"]
-        section.rmp_profile_url   = data["rmp_profile_url"]
-        section.no_rmp_data       = data["no_rmp_data"]
+        _apply_rmp(section, resolved.get(section.professor, _no_data()))

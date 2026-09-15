@@ -1,0 +1,67 @@
+name: Refresh course lists
+
+# The course-autocomplete files in frontend/public are per-term snapshots of
+# USC's catalog. This keeps them in step with whichever terms USC currently has
+# open, so a term rollover needs no source edit.
+#
+# Opens a PR rather than committing directly: this is a ~300KB data change and
+# the generators' shrink guard can only warn, not judge. Vercel redeploys on
+# merge.
+
+on:
+  schedule:
+    # Weekly. USC's active term set changes a handful of times a year, so a
+    # tighter cadence would mostly open no-op runs.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Overwrite even if a term's course count shrinks"
+        type: boolean
+        default: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # The generators are sequential by design (the USC API silently truncates
+    # under concurrent load) and run across every active term.
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Regenerate course lists
+        working-directory: backend
+        run: python generate_course_list.py ${{ inputs.force && '--force' || '' }}
+
+      - name: Regenerate GE course lists
+        working-directory: backend
+        run: python generate_ge_course_list.py
+
+      - name: Open a PR if anything changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/refresh-course-lists
+          title: "chore: refresh course lists for active terms"
+          commit-message: "chore: refresh course lists for active terms"
+          body: |
+            Automated refresh of the per-term course autocomplete data in
+            `frontend/public/`.
+
+            Check the diff before merging: a large drop in any term's course
+            count usually means some USC department fetches failed rather than
+            that courses were genuinely removed. Re-run the workflow if so.
+          add-paths: |
+            frontend/public/courses.*.json
+            frontend/public/ge_courses.*.json
+          delete-branch: true
