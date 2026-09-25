@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Trojan Scheduler">
+  <title>Trojan Scheduler</title>
+  <!--
+    Class blocks staggered across three days — the shape of a built timetable,
+    echoing the miniature schedule grid LoadingScreen animates during a solve.
+    USC cardinal ground, gold and white blocks.
+  -->
+  <rect width="64" height="64" rx="14" fill="#990000"/>
+  <rect x="10" y="12" width="12" height="19" rx="3" fill="#FFCC00"/>
+  <rect x="10" y="37" width="12" height="15" rx="3" fill="#FFCC00"/>
+  <rect x="26" y="12" width="12" height="13" rx="3" fill="#FFFFFF"/>
+  <rect x="26" y="30" width="12" height="22" rx="3" fill="#FFFFFF"/>
+  <rect x="42" y="19" width="12" height="24" rx="3" fill="#FFCC00"/>
+</svg>
