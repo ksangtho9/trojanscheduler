@@ -209,6 +209,18 @@ function useGeCourses(termCode: string) {
 // user is building a Spring schedule.
 const _optionsCache: Record<string, CourseOptions> = {}
 
+const EMPTY_OPTIONS: CourseOptions = { professors: [], sections: [] }
+
+// Consumers index straight into `.sections` / `.professors`, so a payload that
+// is missing either would throw during render. Normalize once here.
+function normalizeOptions(raw: unknown): CourseOptions {
+  const o = (raw ?? {}) as Partial<CourseOptions>
+  return {
+    professors: Array.isArray(o.professors) ? o.professors : [],
+    sections: Array.isArray(o.sections) ? o.sections : [],
+  }
+}
+
 function useCourseOptions(code: string, termCode: string) {
   const [options, setOptions] = useState<CourseOptions | null>(null)
   const [loading, setLoading] = useState(false)
@@ -221,12 +233,16 @@ function useCourseOptions(code: string, termCode: string) {
     let cancelled = false
     const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
     fetch(`${base}/course-options?code=${encodeURIComponent(course)}&term=${encodeURIComponent(termCode)}`)
-      .then((r) => r.json())
-      .then((data: CourseOptions) => {
-        _optionsCache[key] = data
-        if (!cancelled) setOptions(data)
+      // Without the r.ok gate an error body ({"detail": ...}) parses cleanly,
+      // skips the catch below, and gets cached — so one transient failure
+      // leaves this course's picker broken for the life of the page.
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data) => {
+        const normalized = normalizeOptions(data)
+        _optionsCache[key] = normalized
+        if (!cancelled) setOptions(normalized)
       })
-      .catch(() => { if (!cancelled) setOptions({ professors: [], sections: [] }) })
+      .catch(() => { if (!cancelled) setOptions(EMPTY_OPTIONS) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [code, termCode])
@@ -2049,7 +2065,7 @@ function CourseDetailsSelectors({
 
   if (loading) return null
 
-  if (!options || options.sections.length === 0) return null
+  if (!options || !options.sections?.length) return null
 
   const visibleSections = safeProf
     ? options.sections.filter((s) => s.professor === safeProf)

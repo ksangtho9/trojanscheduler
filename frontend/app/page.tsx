@@ -19,6 +19,17 @@ import {
 // avoid a flash when the backend is very fast, while otherwise reflecting true
 // backend latency (no artificial multi-second hold).
 const MIN_LOADING_MS = 600
+
+// Ceiling on one /generate round trip. The backend's own read timeout is 120s
+// because some USC department endpoints genuinely take ~110s, so this sits just
+// above that: long enough for a legitimately slow scrape, short enough that a
+// hung request surfaces an error instead of leaving the loading screen up.
+const GENERATE_TIMEOUT_MS = 150_000
+
+// Auto-pick resubmits once per course that still needs a linked-section choice,
+// so depth is bounded by the course count. This is the backstop for a backend
+// that re-asks for a course we already answered.
+const MAX_AUTO_PICK_ROUNDS = 12
 const waitForMinLoading = (start: number) =>
   new Promise<void>((r) => setTimeout(r, Math.max(0, MIN_LOADING_MS - (Date.now() - start))))
 
@@ -37,30 +48,67 @@ export default function Home() {
   const [planningMode, setPlanningMode] = useState(true)
   const [autoPickMode, setAutoPickMode] = useState(false)
 
-  const callGenerate = async (payload: GenerateRequest) => {
+  const callGenerate = async (payload: GenerateRequest, autoPickDepth = 0) => {
     setError(null)
     setStage("loading")
     const loadingStart = Date.now()
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS)
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
       const res = await fetch(`${backendUrl}/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          signal: controller.signal,
         }
       )
-      const data: GenerateResponse = await res.json()
+
+      // Parse defensively: a proxy's 502 is HTML, and throwing here would
+      // report an upstream outage as a network failure.
+      let data: GenerateResponse | null = null
+      try {
+        data = (await res.json()) as GenerateResponse
+      } catch {
+        data = null
+      }
+
+      // A failed response still carries the backend's own explanation, as
+      // FastAPI's {"detail": ...}. Without this check it parses cleanly, falls
+      // through to the no-schedules branch below, and an invalid term or an
+      // upstream outage gets shown to the student as "adjust your constraints".
+      if (!res.ok || !data) {
+        setError(
+          data?.detail ??
+            data?.error ??
+            (res.status >= 500
+              ? "The scheduler is having trouble reaching USC's Schedule of Classes. Please try again in a moment."
+              : `Request failed (${res.status}). Please try again.`)
+        )
+        setStage("form")
+        return
+      }
 
       if (data.needs_linked_section_prompt) {
         const course = data.needs_linked_section_prompt
 
         // Auto pick: skip the picker and resubmit with no preference
         if (payload.auto_pick_mode) {
+          if (autoPickDepth >= MAX_AUTO_PICK_ROUNDS) {
+            setError(
+              "Couldn't resolve section times automatically. Turn off auto-pick to choose them yourself."
+            )
+            setStage("form")
+            return
+          }
           const existing = payload.linked_section_preferences ?? {}
-          callGenerate({
-            ...payload,
-            linked_section_preferences: { ...existing, [course]: {} },
-          })
+          callGenerate(
+            {
+              ...payload,
+              linked_section_preferences: { ...existing, [course]: {} },
+            },
+            autoPickDepth + 1
+          )
           return
         }
 
@@ -105,9 +153,15 @@ export default function Home() {
       setResponse(data)
       setSwapState({})
       setStage("results")
-    } catch {
-      setError("Could not reach the server. Please try again.")
+    } catch (err) {
+      setError(
+        (err as Error)?.name === "AbortError"
+          ? "This took longer than expected and timed out. USC's catalogue can be slow — please try again."
+          : "Could not reach the server. Please try again."
+      )
       setStage("form")
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 

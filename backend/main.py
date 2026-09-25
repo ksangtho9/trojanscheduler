@@ -24,7 +24,7 @@ DEBUG_TIMING = os.getenv("TROJAN_DEBUG_TIMING", "").lower() in ("1", "true", "ye
 # test_solver.py. Set GE_POOL_CAP=0 to disable.
 GE_POOL_CAP = int(os.getenv("GE_POOL_CAP", "40"))
 
-from scraper import build_school_lookup, HTTP_HEADERS
+from scraper import build_school_lookup, HTTP_HEADERS, UpstreamError
 
 # --- Pydantic models ---
 
@@ -130,7 +130,17 @@ async def get_school_lookup(term_code: str) -> dict[str, str]:
         cached = _school_lookups.get(term_code)
         if cached:
             return cached
-        lookup = await build_school_lookup(http_client, term_code)
+        try:
+            lookup = await build_school_lookup(http_client, term_code)
+        except UpstreamError as e:
+            # Nothing is cached on failure, so the next request retries. Without
+            # this the error escapes above CORSMiddleware and the browser sees a
+            # CORS failure rather than the reason.
+            raise HTTPException(
+                status_code=503,
+                detail="USC's Schedule of Classes is not responding right now. "
+                       "Please try again in a moment.",
+            ) from e
         _school_lookups[term_code] = lookup
         print(f"School lookup ready for {term_code}: {len(lookup)} departments")
         return lookup
@@ -249,7 +259,14 @@ async def course_options(code: str, term: str | None = None):
     from scraper import scrape_course
     term_code = await _resolve_term_or_400(term)
     school_lookup = await get_school_lookup(term_code)
-    raw = await scrape_course(code.strip().upper(), http_client, school_lookup, term_code)
+    try:
+        raw = await scrape_course(code.strip().upper(), http_client, school_lookup, term_code)
+    except UpstreamError as e:
+        # These dropdowns refine a course entry; they never block one. Answer
+        # with the empty-but-well-formed shape so the form keeps working — an
+        # error body here would be cached by the client and break the picker.
+        print(f"course-options unavailable for {code} ({term_code}): {e}")
+        return {"professors": [], "sections": []}
 
     professors = sorted({
         s["professor"] for s in raw
@@ -313,10 +330,40 @@ async def generate(req: GenerateRequest):
     # must return its real sections on the first request, not an empty snapshot.
     # The expensive, non-blocking snapshot treatment is reserved for the GE
     # machinery below, which is where the multi-second cost actually lives.
+    # return_exceptions keeps one flaky department from failing the whole
+    # request: a course we can't fetch degrades to zero sections, and only a
+    # must-have that we genuinely couldn't load is worth failing over.
     results = await asyncio.gather(*[
         scrape_course(code, http_client, school_lookup, term_code) for code in codes
-    ])
-    scraped: dict[str, list] = dict(zip(codes, results))
+    ], return_exceptions=True)
+
+    scraped: dict[str, list] = {}
+    failed_codes: set[str] = set()
+    for code, res in zip(codes, results):
+        if isinstance(res, BaseException):
+            print(f"scrape failed for {code} ({term_code}): {res}")
+            failed_codes.add(code)
+            scraped[code] = []
+        else:
+            scraped[code] = res
+
+    # A must-have we couldn't fetch can't be quietly dropped — the schedule
+    # would be wrong. Say so, rather than letting the solver report it as an
+    # over-constrained search and send the student off to loosen filters.
+    must_have_codes = {
+        code
+        for entry in req.must_haves
+        if entry.type == "course"
+        for code, _, _ in [_resolve_entry(entry)]
+        if code
+    }
+    blocked = sorted(failed_codes & must_have_codes)
+    if blocked:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Couldn't load course data for {', '.join(blocked)} from USC's "
+                   "Schedule of Classes. Please try again in a moment.",
+        )
     _timing["scrape_ms"] = round((_clock() - _t0) * 1000, 1)
 
     # 2. Convert scraper dicts → solver Section dataclasses
@@ -460,11 +507,18 @@ async def generate(req: GenerateRequest):
             if found_code:
                 late_codes.add(found_code)
         if late_codes:
+            # list, not set: the gather below zips against this exact ordering.
+            late_codes = list(late_codes)
             late_results = await asyncio.gather(*[
                 scrape_course(c, http_client, school_lookup, term_code)
                 for c in late_codes
-            ])
+            ], return_exceptions=True)
             for c, raw in zip(late_codes, late_results):
+                if isinstance(raw, BaseException):
+                    # Best-effort backfill: a section-id hint that can't be
+                    # resolved just leaves that entry as the solver found it.
+                    print(f"late scrape failed for {c} ({term_code}): {raw}")
+                    continue
                 if c not in all_sections:
                     all_sections[c] = _to_sections(c, raw)
 

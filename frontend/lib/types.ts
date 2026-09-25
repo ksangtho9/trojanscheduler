@@ -207,6 +207,11 @@ export interface TermsResponse {
 export interface GenerateResponse {
   schedules: Schedule[]
   error: string | null
+  // FastAPI's error body. Present only on a non-2xx response (an inactive term
+  // is a 400, an upstream outage a 503), never alongside `schedules`. Modelled
+  // here so the client can surface the backend's own wording instead of
+  // guessing from a missing `schedules` array.
+  detail?: string
   // The term the backend actually scheduled against, echoed back so results
   // are labelled with the resolved term rather than the requested one.
   term_code?: string

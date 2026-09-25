@@ -30,6 +30,8 @@ python3 test_scraper.py --live     # smoke check against the real USC API
 python3 test_ge_finder.py          # term-scoped GE discovery
 python3 test_main_terms.py         # API-level term selection + validation
 python3 test_generate_course_list.py  # generator exit-status contract (the refresh workflow keys on it)
+python3 test_upstream_failures.py  # retry + degradation when USC's API is flaky
+python3 test_rmp.py                # RMP enrichment budget (note: does not follow the runner convention below)
 
 # Frontend (port 3000)
 cd frontend
@@ -106,6 +108,28 @@ Term codes are `YYYY` + a season digit (`1`=Spring, `2`=Summer, `3`=Fall), so `2
 5. `rmp.enrich_with_rmp` attaches RateMyProfessors data
 6. `solver.build_schedules` runs the solve and returns serialized schedules
 
+### Failure handling
+
+USC's API is flaky — individual department endpoints time out or 5xx, and one
+blip must not fail a whole request. Two rules:
+
+- **Every request-path GET to USC goes through `scraper._get_json`**, which retries
+  transient failures and raises `UpstreamError` once they are spent. Never call
+  `client.get(...)` + `raise_for_status()` directly on the request path.
+  `RETRY_DEADLINE_S` gates whether a *new* attempt starts; it never aborts one in
+  flight, because the 120s read timeout exists for endpoints that genuinely take
+  ~110s and cutting those off would cause the failure it prevents.
+- **Errors reach the client as `HTTPException(status_code, detail=...)`**, the same
+  convention as `_resolve_term_or_400` — never a bare 500. This matters beyond
+  tidiness: an unhandled exception propagates *above* `CORSMiddleware`, so the 500
+  carries no CORS headers and the browser sees a CORS failure instead of the
+  reason. The frontend reads `detail` (`callGenerate` in `app/page.tsx`); a 200
+  with `error` set stays reserved for domain failures from the solver.
+
+A failed **must-have** course is a 503 naming the course; a failed **nice-to-have**
+is dropped silently; `/course-options` degrades to `{"professors": [], "sections": []}`
+because an error body there would be cached by the client and break the picker.
+
 ### Solver (`backend/solver.py`, ~1600 lines — the core of the project)
 
 Pipeline inside `build_schedules`:
@@ -159,7 +183,7 @@ recurses when the backend asks for a linked-section choice. Everything else is p
 `solver.py`'s serializers** (`_serialize_pair`, `_serialize_linked`, `_serialize_runner_ups`) and
 `main.py`'s Pydantic models. It is the only place the contract is documented.
 
-`LoadingScreen` is held for `MIN_LOADING_MS` (4s) even when the backend is faster.
+`LoadingScreen` is held for `MIN_LOADING_MS` (600ms) even when the backend is faster.
 
 The frontend has its own `frontend/CLAUDE.md` → `frontend/AGENTS.md`, which warns that this Next.js
 version has breaking changes vs. training data; read `node_modules/next/dist/docs/` before writing

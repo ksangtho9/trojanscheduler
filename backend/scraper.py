@@ -15,6 +15,65 @@ HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
+# USC's SOC API is intermittently flaky — individual department endpoints time
+# out or return 5xx under load. A single blip used to propagate out of
+# asyncio.gather and fail a whole /generate request, so every request-path GET
+# now goes through _get_json, which retries before giving up.
+RETRY_ATTEMPTS = max(1, int(os.getenv("USC_RETRY_ATTEMPTS", "3")))
+RETRY_BACKOFF = float(os.getenv("USC_RETRY_BACKOFF", "1.5"))  # seconds, linear: backoff * attempt
+
+# A retry is only *started* while under this deadline — it never aborts a
+# request already in flight. That distinction matters: the client's 120s read
+# timeout exists because some USC endpoints (DSO) genuinely take ~110s, and
+# cutting those off would cause the very failure this is meant to prevent. So a
+# fast failure (connection refused in ~1s) retries, while a slow read timeout
+# does not — re-asking a hung endpoint is pointless anyway.
+RETRY_DEADLINE_S = float(os.getenv("USC_RETRY_DEADLINE_S", "30"))
+
+
+class UpstreamError(RuntimeError):
+    """A USC SOC API call failed after exhausting its retries."""
+
+
+async def _get_json(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict,
+    *,
+    attempts: int = RETRY_ATTEMPTS,
+):
+    """
+    GET `url` and return the decoded JSON body, retrying transient failures.
+
+    Raises UpstreamError once the retries are spent, so callers can tell an
+    upstream outage apart from an empty-but-valid result and answer with
+    something honest. Never raises a bare httpx error.
+    """
+    started = time.time()
+    last: Exception | None = None
+
+    for attempt in range(attempts):
+        try:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:  # noqa: BLE001 - matches the module's guard style
+            last = e
+            # Status is read defensively: the test suite's fake responses
+            # implement only raise_for_status() and json().
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status is not None and 400 <= status < 500 and status != 429:
+                # Permanent for this request — retrying cannot help.
+                raise UpstreamError(f"{url} returned HTTP {status}") from e
+
+            elapsed = time.time() - started
+            if attempt == attempts - 1 or elapsed >= RETRY_DEADLINE_S:
+                break
+            await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+
+    raise UpstreamError(f"{url} failed after {attempt + 1} attempt(s): {last}") from last
+
+
 LECTURE_MODES = {"Lecture", "Seminar", "Activity", "Workshop", "Screening"}
 
 
@@ -52,9 +111,9 @@ async def build_school_lookup(client: httpx.AsyncClient, term_code: str) -> dict
     Department-to-school mapping is term-specific, so this is built and cached
     per term by the caller.
     """
-    r = await client.get(f"{BASE_URL}/Programs/TermCode", params={"termCode": term_code})
-    r.raise_for_status()
-    programs = r.json()
+    programs = await _get_json(
+        client, f"{BASE_URL}/Programs/TermCode", {"termCode": term_code}
+    ) or []
     lookup: dict[str, str] = {}
     for prog in programs:
         dept = prog.get("prefix")
@@ -187,12 +246,12 @@ _inflight_refreshes: set[str] = set()
 async def _fetch_dept_from_usc(
     dept: str, school: str, client: httpx.AsyncClient, term_code: str
 ) -> list:
-    r = await client.get(
+    data = await _get_json(
+        client,
         f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
-        params={"termCode": term_code, "school": school, "program": dept},
-    )
-    r.raise_for_status()
-    return r.json().get("courses") or []
+        {"termCode": term_code, "school": school, "program": dept},
+    ) or {}
+    return data.get("courses") or []
 
 
 async def _refresh_dept_bg(
