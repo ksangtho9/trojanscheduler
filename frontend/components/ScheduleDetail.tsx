@@ -12,6 +12,9 @@ interface Props {
   swapState: SwapState
   onSwap: (originalId: string, replacement: CourseEntry) => void
   onStartOver: () => void
+  /** Term the schedule was built for; sets the .ics date range */
+  termCode?: string
+  termLabel?: string
 }
 
 export default function ScheduleDetail({
@@ -19,6 +22,8 @@ export default function ScheduleDetail({
   swapState,
   onSwap,
   onStartOver,
+  termCode,
+  termLabel,
 }: Props) {
   const [expandedSwap, setExpandedSwap] = useState<string | null>(null)
 
@@ -32,12 +37,19 @@ export default function ScheduleDetail({
   )
 
   const handleExport = () => {
-    const icsString = generateICS(schedule, resolvedCourses)
+    let icsString: string
+    try {
+      icsString = generateICS(schedule, resolvedCourses, termCode, termLabel)
+    } catch {
+      alert("Calendar export isn't available for this term yet.")
+      return
+    }
     const blob = new Blob([icsString], { type: "text/calendar" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = "trojan-schedule.ics"
+    const termSlug = termLabel ? `-${termLabel.toLowerCase().replace(/\s+/g, "-")}` : ""
+    a.download = `trojan-schedule${termSlug}.ics`
     a.click()
     URL.revokeObjectURL(url)
   }

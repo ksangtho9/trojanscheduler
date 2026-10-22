@@ -244,7 +244,7 @@ export default function Home() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <LeftPanel currentStep={currentStep} onStartOver={stage === "results" || stage === "detail" ? handleStartOver : undefined} />
+      <LeftPanel currentStep={currentStep} onStartOver={stage === "results" || stage === "detail" ? handleStartOver : undefined} termLabel={response?.term_label} />
       <div
         style={{
           marginLeft: "var(--content-offset)",
@@ -324,6 +324,8 @@ export default function Home() {
                     setSwapState((prev) => ({ ...prev, [originalId]: replacement }))
                   }
                   onStartOver={handleStartOver}
+                  termCode={response.term_code}
+                  termLabel={response.term_label}
                 />
               </div>
             )}

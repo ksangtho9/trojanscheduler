@@ -22,6 +22,7 @@ import {
   TermsResponse,
 } from "@/lib/types"
 import LeftPanel from "./LeftPanel"
+import InfoTip from "./InfoTip"
 
 // Every course lookup in this form is term-specific. Carried by context rather
 // than prop-drilled: the lookups live in leaf components several levels below
@@ -1148,7 +1149,7 @@ export default function InputForm({
     const typeLabel = promptType.charAt(0).toUpperCase() + promptType.slice(1)
     return (
       <div style={{ display: "flex", minHeight: "100vh" }}>
-        <LeftPanel currentStep={1} />
+        <LeftPanel currentStep={1} termLabel={terms.find((t) => t.term_code === termCode)?.label} />
         <div style={{ marginLeft: "var(--content-offset)", width: "var(--content-width)", minHeight: "100vh", backgroundColor: "var(--bg-page)", display: "flex", alignItems: "center", justifyContent: "center", paddingTop: "calc(var(--topbar-height) + 48px)", paddingBottom: 48 }} className="app-discussion-inner">
           <div style={{ maxWidth: 520, width: "100%" }}>
             {/* Header — surfaces the system-selected lecturer so the link
@@ -1332,13 +1333,13 @@ export default function InputForm({
     <TermContext.Provider value={termCode}>
     <div style={{ display: "flex", minHeight: "100vh" }}>
 
-      <LeftPanel currentStep={1} />
+      <LeftPanel currentStep={1} termLabel={terms.find((t) => t.term_code === termCode)?.label} />
 
       <div style={{ marginLeft: "var(--content-offset)", width: "var(--content-width)", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
         <div className="app-form-inner" style={{ maxWidth: 860, margin: "0 auto", paddingTop: "calc(var(--topbar-height) + 32px)", paddingRight: 56, paddingBottom: 80, paddingLeft: 56 }}>
 
           {/* Mode toggles — top right */}
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16, marginBottom: 20 }}>
+          <div className="app-mode-row" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16, marginBottom: 20 }}>
             {/* Term picker — sits with the global mode controls, not the form.
                 Shown whenever any term resolved; a single-term list renders as
                 a static label rather than a dropdown with one option. */}
@@ -1362,7 +1363,7 @@ export default function InputForm({
             )}
 
             {terms.length > 1 && (
-              <div className="flex items-center gap-2">
+              <div className="app-mode-term flex items-center gap-2">
                 <span
                   title={termSource === "static"
                     ? "Backend unreachable — showing the term list bundled with this build, which may be out of date."
@@ -1399,7 +1400,7 @@ export default function InputForm({
             )}
 
             {/* Auto Pick toggle */}
-            <div className="flex items-center gap-2">
+            <div className="app-mode-toggle flex items-center gap-2">
               <span style={{ fontSize: 12, fontWeight: 600, color: autoPickMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Auto Pick
               </span>
@@ -1413,25 +1414,12 @@ export default function InputForm({
                   <div className="toggle-thumb" style={{ transform: autoPickMode ? "translateX(18px)" : "translateX(0)" }} />
                 </div>
               </button>
-              <div className="relative group" style={{ display: "flex", alignItems: "center" }}>
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-tertiary)", flexShrink: 0, cursor: "help" }}>
-                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M8 7v5M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-                <div
-                  className="absolute opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150"
-                  style={{ top: "calc(100% + 8px)", right: 0, width: 240, background: "#FFFFFF", border: "1px solid var(--border-default)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 4px 16px rgba(0,0,0,0.08)", zIndex: 50, textAlign: "left" as const }}
-                >
-                  <div style={{ position: "absolute", top: -5, right: 4, width: 10, height: 10, background: "#FFFFFF", borderTop: "1px solid var(--border-default)", borderLeft: "1px solid var(--border-default)", transform: "rotate(45deg)" }} />
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>Auto Pick</div>
-                  <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-secondary)" }}>
-                    Automatically lets the program choose labs, discussions, and quizzes — skips the picker entirely.
-                  </p>
-                </div>
-              </div>
+              <InfoTip title="Auto Pick">
+                Automatically lets the program choose labs, discussions, and quizzes — skips the picker entirely.
+              </InfoTip>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="app-mode-toggle flex items-center gap-2">
               <span style={{ fontSize: 12, fontWeight: 600, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Planning Mode
               </span>
@@ -1445,25 +1433,9 @@ export default function InputForm({
                   <div className="toggle-thumb" style={{ transform: planningMode ? "translateX(18px)" : "translateX(0)" }} />
                 </div>
               </button>
-              <div className="relative group" style={{ display: "flex", alignItems: "center" }}>
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-tertiary)", flexShrink: 0, cursor: "help" }}>
-                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M8 7v5M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-                {/* Polished card tooltip */}
-                <div
-                  className="absolute opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150"
-                  style={{ top: "calc(100% + 8px)", right: 0, width: 260, background: "#FFFFFF", border: "1px solid var(--border-default)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 4px 16px rgba(0,0,0,0.08)", zIndex: 50, textAlign: "left" as const }}
-                >
-                  <div style={{ position: "absolute", top: -5, right: 4, width: 10, height: 10, background: "#FFFFFF", borderTop: "1px solid var(--border-default)", borderLeft: "1px solid var(--border-default)", transform: "rotate(45deg)" }} />
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
-                    Planning Mode
-                  </div>
-                  <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-secondary)" }}>
-                    Includes sections at capacity in your results. Enrollment fluctuates throughout registration; waitlisting a full section is often a viable path.
-                  </p>
-                </div>
-              </div>
+              <InfoTip title="Planning Mode" width={260}>
+                Includes sections at capacity in your results. Enrollment fluctuates throughout registration; waitlisting a full section is often a viable path.
+              </InfoTip>
             </div>
           </div>
 
@@ -1510,13 +1482,6 @@ export default function InputForm({
               </h2>
               <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>{niceToHaves.length}/4</span>
             </div>
-            {niceToHaves.filter(entryFilled).length === 0 &&
-              !niceToHaves.some((e) => !entryFilled(e)) &&
-              editingNiceId === null && (
-              <p style={{ fontSize: 13, color: "var(--text-tertiary)", fontStyle: "italic", marginBottom: 12 }}>
-                No entries yet.
-              </p>
-            )}
             <CourseEntryBlock
               entries={niceToHaves}
               setEntries={setNiceToHaves}

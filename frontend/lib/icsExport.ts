@@ -1,7 +1,8 @@
-// generateICS(schedule: Schedule): string
+// generateICS(schedule, courses, termCode, termLabel): string
 // Builds RFC 5545 iCalendar string for all courses in the selected schedule
 // Maps recurring days to RRULE (e.g. BYDAY=MO,WE)
 // Triggers browser download as trojan-schedule.ics
+import { getTermDates, parseLocalDate } from "./termCalendar"
 import { CourseEntry, Schedule } from "@/lib/types"
 
 // ---------------------------------------------------------------------------
@@ -22,20 +23,35 @@ const DAY_TO_RRULE: Record<string, string> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * USC Fall 2025 semester start date — Monday Sept 1 2025.
- * Used as the anchor to compute the first occurrence of each class.
- * Update this constant each semester.
- */
-const SEMESTER_START = new Date("2025-09-01")
-const SEMESTER_END_DATE = "20251205"   // Dec 5 2025 — last day of classes
+/** First and last day of classes for the term being exported. */
+interface TermBounds {
+  start: Date
+  /** RRULE UNTIL value (UTC), covering the whole last day of classes in LA */
+  until: string
+}
+
+function termBounds(termCode: string | undefined): TermBounds {
+  const dates = getTermDates(termCode)
+  if (!dates) {
+    throw new Error(`No class dates known for term ${termCode ?? "(none)"}`)
+  }
+  // RFC 5545: with a TZID on DTSTART, UNTIL must be in UTC. 07:59:59Z the next
+  // day is 23:59:59 in Los Angeles in winter (and 00:59 in summer), so a class
+  // late on the final day is still included.
+  const dayAfterEnd = parseLocalDate(dates.end)
+  dayAfterEnd.setDate(dayAfterEnd.getDate() + 1)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const until =
+    `${dayAfterEnd.getFullYear()}${pad(dayAfterEnd.getMonth() + 1)}${pad(dayAfterEnd.getDate())}T075959Z`
+  return { start: parseLocalDate(dates.start), until }
+}
 
 /**
- * Find the first date on or after SEMESTER_START that falls on
+ * Find the first date on or after `from` that falls on
  * the given weekday (0 = Sun, 1 = Mon, ..., 6 = Sat).
  */
-function firstOccurrence(weekday: number): Date {
-  const d = new Date(SEMESTER_START)
+function firstOccurrence(from: Date, weekday: number): Date {
+  const d = new Date(from)
   while (d.getDay() !== weekday) {
     d.setDate(d.getDate() + 1)
   }
@@ -112,19 +128,22 @@ interface EventBlock {
   notes?: string
 }
 
-function buildEvent(block: EventBlock): string {
+function buildEvent(block: EventBlock, term: TermBounds): string {
   const { sectionId, sectionType, course, professor, location, days, startTime, endTime, notes } = block
 
-  // Use the first day to anchor DTSTART/DTEND
-  // RRULE handles the repeating pattern across all days
+  // Anchor DTSTART on the earliest meeting in the first week. Anchoring on
+  // days[0] would skip an earlier weekday in week one (e.g. days = Wed, Mon).
+  // RRULE handles the repeating pattern across all days.
   const firstDay = days[0]
-  const firstDate = firstOccurrence(WEEKDAY_INDEX[firstDay] ?? 1)
+  const firstDate = days
+    .map((d) => firstOccurrence(term.start, WEEKDAY_INDEX[d] ?? 1))
+    .reduce((earliest, d) => (d < earliest ? d : earliest))
 
   const dtStart = formatDT(firstDate, startTime)
   const dtEnd = formatDT(firstDate, endTime)
 
   const byday = days.map((d) => DAY_TO_RRULE[d] ?? "MO").join(",")
-  const rrule = `FREQ=WEEKLY;BYDAY=${byday};UNTIL=${SEMESTER_END_DATE}T235959Z`
+  const rrule = `FREQ=WEEKLY;BYDAY=${byday};UNTIL=${term.until}`
 
   const summary = `${course} — ${sectionType.charAt(0).toUpperCase() + sectionType.slice(1)}`
   const description = [
@@ -164,9 +183,17 @@ function buildEvent(block: EventBlock): string {
  *
  * @param schedule   The selected Schedule (used for metadata only)
  * @param courses    Resolved course list (post-swap)
+ * @param termCode   USC term the schedule is for (e.g. "20271"); sets the date range
+ * @param termLabel  Human-readable term (e.g. "Spring 2027") for the calendar name
  * @returns          iCal string ready to download as .ics
  */
-export function generateICS(schedule: Schedule, courses: CourseEntry[]): string {
+export function generateICS(
+  schedule: Schedule,
+  courses: CourseEntry[],
+  termCode: string | undefined,
+  termLabel?: string,
+): string {
+  const term = termBounds(termCode)
   const events: string[] = []
 
   for (const course of courses) {
@@ -197,7 +224,7 @@ export function generateICS(schedule: Schedule, courses: CourseEntry[]): string 
         ]
           .filter(Boolean)
           .join(" · "),
-      })
+      }, term)
     )
 
     // Linked section events (discussion, lab, quiz, etc.)
@@ -213,7 +240,7 @@ export function generateICS(schedule: Schedule, courses: CourseEntry[]): string 
           days: ls.days,
           startTime: ls.start_time,
           endTime: ls.end_time,
-        })
+        }, term)
       )
     }
   }
@@ -221,10 +248,10 @@ export function generateICS(schedule: Schedule, courses: CourseEntry[]): string 
   const calendarLines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Trojan Scheduler//USC Fall 2025//EN",
+    "PRODID:-//Trojan Scheduler//USC//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
-    `X-WR-CALNAME:USC Schedule — Rank ${schedule.rank}`,
+    `X-WR-CALNAME:USC ${termLabel ? `${termLabel} ` : ""}Schedule — Rank ${schedule.rank}`,
     "X-WR-TIMEZONE:America/Los_Angeles",
     ...events,
     "END:VCALENDAR",

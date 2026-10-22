@@ -310,6 +310,12 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   letter-spacing: 0.05em;
 }
 
+/* Course codes are typed in caps, but the hint text reads as a normal sentence */
+.form-add-row input.form-add-input::placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .form-add-row input.form-add-input:focus {
   outline: none;
   box-shadow: none;
@@ -652,6 +658,24 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   /* Submit footer full-width with tighter padding */
   .app-submit-footer {
     padding: 14px 20px !important;
+  }
+
+  /* Mode row: term picker gets its own full-width line, the two toggles share
+     the next one. Stops "Spring 2027" truncating and the labels wrapping. */
+  .app-mode-row {
+    flex-wrap: wrap;
+    justify-content: space-between !important;
+    row-gap: 14px;
+  }
+  .app-mode-term {
+    flex-basis: 100%;
+  }
+  .app-mode-term select {
+    flex: 1;
+    min-width: 0;
+  }
+  .app-mode-toggle span {
+    white-space: nowrap;
   }
 
   /* Prevent iOS auto-zoom on input focus */

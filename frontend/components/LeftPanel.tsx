@@ -3,9 +3,12 @@
 interface Props {
   currentStep: 1 | 2 | 3
   onStartOver?: () => void
+  /** Selected term, e.g. "Spring 2027". Omitted until terms have loaded. */
+  termLabel?: string
 }
 
-export default function LeftPanel({ currentStep, onStartOver }: Props) {
+export default function LeftPanel({ currentStep, onStartOver, termLabel }: Props) {
+  const eyebrow = termLabel ? `USC · ${termLabel}` : "USC"
   const steps = [
     { num: 1, label: "Add your courses & constraints" },
     { num: 2, label: "Build 3 optimal schedules" },
@@ -32,7 +35,7 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
       {/* Brand */}
       <div onClick={onStartOver} style={{ cursor: onStartOver ? "pointer" : "default" }}>
         <p style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.12em", color: "rgba(255,204,0,0.75)", textTransform: "uppercase", marginBottom: 2 }}>
-          USC · Fall 2026
+          {eyebrow}
         </p>
         <h1 style={{ fontFamily: "'DM Serif Display', serif", color: "#fff", fontSize: 18, lineHeight: 1, margin: 0 }}>
           Trojan Scheduler
@@ -112,7 +115,7 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
             marginBottom: 14,
           }}
         >
-          USC · Fall 2026
+          {eyebrow}
         </p>
         <h1
           onClick={onStartOver}
