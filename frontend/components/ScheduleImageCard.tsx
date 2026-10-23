@@ -121,6 +121,7 @@ export default function ScheduleImageCard({
       {/* ── Schedule grid (CSS, not PNG) ───────────────── */}
       <div style={{ padding: "0 16px" }}>
         <div
+          className="schedule-card-grid"
           style={{
             borderRadius: 14,
             overflow: "hidden",

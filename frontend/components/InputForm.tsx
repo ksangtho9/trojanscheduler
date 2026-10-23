@@ -23,6 +23,7 @@ import {
 } from "@/lib/types"
 import LeftPanel from "./LeftPanel"
 import InfoTip from "./InfoTip"
+import { formatClock } from "@/lib/time"
 
 // Every course lookup in this form is term-specific. Carried by context rather
 // than prop-drilled: the lookups live in leaf components several levels below
@@ -2389,12 +2390,7 @@ function SliderRow({
   )
 }
 
-function formatTime(t: string): string {
-  const [h, m] = t.split(":").map(Number)
-  const ampm = h >= 12 ? "pm" : "am"
-  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
-  return `${hour}:${m.toString().padStart(2, "0")} ${ampm}`
-}
+const formatTime = (t: string) => formatClock(t, "spaced")
 
 function PinIcon() {
   return (

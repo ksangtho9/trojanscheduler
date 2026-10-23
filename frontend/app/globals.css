@@ -678,6 +678,13 @@ input[type="range"].form-constraint-range::-moz-range-progress {
     white-space: nowrap;
   }
 
+  /* Result-card schedule grid: the desktop 11:7 thumbnail leaves ~15px per
+     hour on a phone, too short for a readable block. Give it real height. */
+  .schedule-card-grid {
+    aspect-ratio: auto !important;
+    height: 420px;
+  }
+
   /* Prevent iOS auto-zoom on input focus */
   input[type="text"],
   input[type="time"],

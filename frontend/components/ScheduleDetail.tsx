@@ -7,6 +7,7 @@ import { CourseEntry, RunnerUp, Schedule, SwapState } from "@/lib/types"
 import { generateICS } from "@/lib/icsExport"
 import { track } from "@/lib/analytics"
 import ScheduleGrid from "./ScheduleGrid"
+import { formatClock, formatClockRange } from "@/lib/time"
 
 interface Props {
   schedule: Schedule
@@ -264,12 +265,7 @@ function SecondaryButton({ onClick, label }: { onClick: () => void; label: strin
 
 // ── Course row ────────────────────────────────────────────────────────────────
 
-function formatTime(t: string): string {
-  const [h, m] = t.split(":").map(Number)
-  const ampm = h >= 12 ? "pm" : "am"
-  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
-  return m === 0 ? `${hour}${ampm}` : `${hour}:${m.toString().padStart(2, "0")}${ampm}`
-}
+const formatTime = (t: string) => formatClock(t)
 
 function formatDays(days: string[]): string {
   return days.join(" / ")
@@ -365,7 +361,7 @@ function CourseRow({
         {/* Meta strip */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", fontSize: 13, color: "var(--text-tertiary)" }}>
           <Meta label="Days" value={formatDays(course.days)} />
-          <Meta label="Time" value={`${formatTime(course.start_time)} to ${formatTime(course.end_time)}`} />
+          <Meta label="Time" value={formatClockRange(course.start_time, course.end_time)} />
           <Meta label="Units" value={course.units.toString()} />
           <Meta label="Location" value={course.location || "TBA"} />
         </div>
@@ -397,7 +393,7 @@ function CourseRow({
                   {titleCase(ls.section_type)}
                 </span>
                 <span>{formatDays(ls.days)}</span>
-                <span>{formatTime(ls.start_time)} to {formatTime(ls.end_time)}</span>
+                <span>{formatClockRange(ls.start_time, ls.end_time)}</span>
                 {ls.location && <span>{ls.location}</span>}
               </div>
             ))}
@@ -684,7 +680,7 @@ function RunnerUpRow({
           {runner.professor}
         </p>
         <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-          {runner.days.join(" / ")} · {formatTime(runner.start_time)} to {formatTime(runner.end_time)}
+          {runner.days.join(" / ")} · {formatClockRange(runner.start_time, runner.end_time)}
           {runner.seats_available !== undefined && (
             <span style={{ marginLeft: 8 }}>{runner.seats_available} seats</span>
           )}

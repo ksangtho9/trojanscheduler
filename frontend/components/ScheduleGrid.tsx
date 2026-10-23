@@ -3,7 +3,9 @@
 //   large   — full-bleed schedule visible on the detail page
 "use client"
 
+import { useEffect, useRef, useState } from "react"
 import { Schedule, CourseEntry, LinkedSection } from "@/lib/types"
+import { clockMinutes, formatClock, formatClockRange } from "@/lib/time"
 
 interface Props {
   schedule: Schedule
@@ -68,17 +70,12 @@ function buildColorMap(schedule: Schedule): Map<string, string> {
 }
 
 function pos(t: string): number {
-  const [h, m] = t.split(":").map(Number)
-  return Math.max(0, Math.min(1, (h * 60 + m - START_MIN) / SPAN))
+  const total = clockMinutes(t) ?? START_MIN
+  return Math.max(0, Math.min(1, (total - START_MIN) / SPAN))
 }
 
 // Full-word time formatting: "8am", "12pm", "1:30pm".
-function fmt(t: string): string {
-  const [h, m] = t.split(":").map(Number)
-  const ampm = h >= 12 ? "pm" : "am"
-  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
-  return m === 0 ? `${hour}${ampm}` : `${hour}:${m.toString().padStart(2, "0")}${ampm}`
-}
+const fmt = (t: string) => formatClock(t)
 
 // Format an instructor name as "Last, First". "Karen S. Reeves" -> "Reeves, Karen S."
 // Falls through TBA / single-word names unchanged.
@@ -103,13 +100,39 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
   // Per-schedule color assignment — guarantees distinct colors per course.
   const colorMap = buildColorMap(schedule)
 
+  // The detail ("large") grid is full-bleed on desktop but phone-width on
+  // mobile; there its 72px time gutter left ~42px per day. Slim it down.
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [rootWidth, setRootWidth] = useState<number | null>(null)
+  const roomy = isLarge && (rootWidth === null || rootWidth >= 560)
+
   // Density-dependent dimensions
   const dayHeaderSize = isLarge ? 11 : 9
   const dayHeaderPad = isLarge ? "12px 0 10px" : "7px 0 6px"
-  const timeGutterWidth = isLarge ? 72 : 44
+  const timeGutterWidth = roomy ? 72 : 44
   const timeFontSize = isLarge ? 11 : 9
   const blockRadius = isLarge ? 7 : 4
-  const dayGap = isLarge ? 6 : 2
+  const dayGap = roomy ? 6 : isLarge ? 4 : 2
+
+  // Measure the real column size so blocks decide what text fits in pixels,
+  // not percentages. The same 50-minute class is ~12px tall in a phone card and
+  // ~50px in the detail view, so percentage thresholds clipped text mid-glyph.
+  const columnsRef = useRef<HTMLDivElement>(null)
+  const [metrics, setMetrics] = useState<GridMetrics | null>(null)
+  useEffect(() => {
+    const el = columnsRef.current
+    if (!el) return
+    const update = () => {
+      const { width, height } = el.getBoundingClientRect()
+      setMetrics({ height, colWidth: (width - dayGap * (DAYS.length - 1)) / DAYS.length })
+      if (rootRef.current) setRootWidth(rootRef.current.getBoundingClientRect().width)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    if (rootRef.current) ro.observe(rootRef.current)
+    return () => ro.disconnect()
+  }, [dayGap])
 
   // Every hour from 8am through 8pm, in both modes.
   const hours: number[] = []
@@ -117,6 +140,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
 
   return (
     <div
+      ref={rootRef}
       style={{
         width: "100%",
         height: "100%",
@@ -158,7 +182,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
           display: "flex",
           flex: 1,
           position: "relative",
-          padding: isLarge ? "10px 8px" : "4px 4px",
+          padding: roomy ? "10px 8px" : isLarge ? "8px 4px" : "4px 4px",
         }}
       >
         {/* Time gutter — every hour */}
@@ -189,7 +213,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
         </div>
 
         {/* Day columns + overlay gridlines */}
-        <div style={{ flex: 1, display: "flex", gap: dayGap, position: "relative" }}>
+        <div ref={columnsRef} style={{ flex: 1, display: "flex", gap: dayGap, position: "relative" }}>
           {/* Hour gridlines — every hour, span all columns */}
           {hours.slice(1, -1).map((h) => {
             const top = ((h * 60 - START_MIN) / SPAN) * 100
@@ -233,6 +257,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
                       color={colorMap.get(course.course) ?? COURSE_PALETTE[0]}
                       isLarge={isLarge}
                       radius={blockRadius}
+                      metrics={metrics}
                     />
                   )
                 })}
@@ -249,6 +274,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
                         color={colorMap.get(course.course) ?? COURSE_PALETTE[0]}
                         isLarge={isLarge}
                         radius={blockRadius}
+                        metrics={metrics}
                       />
                     ))
                 )}
@@ -261,6 +287,129 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
   )
 }
 
+// ── Block layout ──────────────────────────────────────────────────────────────
+
+interface GridMetrics {
+  /** Day-column height in px (the 8am-8pm span) */
+  height: number
+  /** Width of one day column in px */
+  colWidth: number
+}
+
+interface Line {
+  text: string
+  size: number
+  weight: number
+  mono?: boolean
+  faded?: boolean
+}
+
+// Columns narrower than this can't fit "PHYS 152 Lab" on one line, so the code
+// stacks as "PHYS" / "152 Lab" instead of being cut to "P…".
+const NARROW_COL_PX = 96
+
+const SHORT_TYPE: Record<string, string> = { discussion: "Dis", laboratory: "Lab", lab: "Lab", quiz: "Quiz", lecture: "" }
+
+function shortType(type: string): string {
+  const key = type.toLowerCase()
+  return SHORT_TYPE[key] ?? titleCase(type).slice(0, 4)
+}
+
+/**
+ * Decide which lines a block shows. Only whole lines that fit inside the block
+ * are rendered, so text is never sliced through the middle of a glyph.
+ */
+function layoutBlock({
+  code,
+  type,
+  prof,
+  start,
+  end,
+  heightPx,
+  colWidth,
+  isLarge,
+}: {
+  code: string
+  type?: string
+  prof?: string
+  start: string
+  end: string
+  heightPx: number | null
+  colWidth: number | null
+  isLarge: boolean
+}): { lines: Line[]; padY: number; padX: number; gap: number } {
+  const narrow = colWidth !== null && colWidth < NARROW_COL_PX
+  const main = isLarge ? (narrow ? 11.5 : 15) : narrow ? 10 : 11.5
+  const sub = isLarge ? (narrow ? 10 : 12) : narrow ? 9 : 10
+  const padX = narrow ? 4 : isLarge ? 12 : 8
+  const padY = heightPx !== null && heightPx < 26 ? 2 : isLarge ? 8 : 4
+  const gap = isLarge ? 2 : 1
+
+  const candidates: Line[] = []
+  if (narrow) {
+    const [dept, ...rest] = code.split(" ")
+    const number = rest.join(" ")
+    const t = type ? shortType(type) : ""
+    const oneLine = [code, t].filter(Boolean).join(" ")
+    // ~0.62em per glyph for Inter bold; keep one line when it fits the width
+    const fitsOneLine = colWidth !== null && oneLine.length * main * 0.62 <= colWidth - padX * 2 - 4
+    const roomForTwo = heightPx === null || heightPx >= padY * 2 + Math.ceil(main * 1.2) * 2 + gap
+    if (fitsOneLine) {
+      candidates.push({ text: oneLine, size: main, weight: 700 })
+    } else if (!roomForTwo) {
+      // One short line and the full code is too wide: "MATH" reads better than
+      // "MAT…". Color + the tooltip identify the exact course.
+      candidates.push({ text: dept, size: main, weight: 700 })
+    } else {
+      candidates.push({ text: dept, size: main, weight: 700 })
+      if (number || t) candidates.push({ text: [number, t].filter(Boolean).join(" "), size: main, weight: 700 })
+    }
+    candidates.push({ text: formatClock(start), size: sub, weight: 500, mono: true, faded: true })
+  } else {
+    candidates.push({ text: type ? `${code} ${titleCase(type)}` : code, size: main, weight: 700 })
+    if (prof) candidates.push({ text: prof, size: sub, weight: 500, faded: true })
+    candidates.push({ text: `${fmt(start)} - ${fmt(end)}`, size: sub, weight: 500, mono: true, faded: true })
+  }
+
+  // Before the first measurement, show just the first line rather than guess.
+  if (heightPx === null) return { lines: candidates.slice(0, 1), padY, padX, gap }
+
+  const lines: Line[] = []
+  let used = padY * 2
+  for (const line of candidates) {
+    const lineH = Math.ceil(line.size * 1.2) + (lines.length ? gap : 0)
+    if (used + lineH > heightPx) break
+    lines.push(line)
+    used += lineH
+  }
+  return { lines, padY, padX, gap }
+}
+
+function BlockBody({ lines, fg, fgFaded, gap }: { lines: Line[]; fg: string; fgFaded: string; gap: number }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap, minWidth: 0 }}>
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          style={{
+            fontSize: line.size,
+            fontWeight: line.weight,
+            fontFamily: line.mono ? "ui-monospace, SFMono-Regular, Menlo, monospace" : undefined,
+            color: line.faded ? fgFaded : fg,
+            letterSpacing: line.mono ? 0 : "0.02em",
+            lineHeight: 1.2,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {line.text}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Course block ──────────────────────────────────────────────────────────────
 
 function CourseBlock({
@@ -268,101 +417,53 @@ function CourseBlock({
   color,
   isLarge,
   radius,
+  metrics,
 }: {
   course: CourseEntry
   color: string
   isLarge: boolean
   radius: number
+  metrics: GridMetrics | null
 }) {
   const top = pos(course.start_time)
-  const heightPct = pos(course.end_time) - top
+  const heightPct = Math.max(pos(course.end_time) - top, isLarge ? 0.05 : 0.04)
   const isGE = course.entry_type === "ge"
   const isDC = course.is_double_count
   const bg = isDC ? DOUBLE_COUNT_BG : isGE ? GE_COLOR : color
   const fg = isDC ? DOUBLE_COUNT_FG : "#ffffff"
   const fgFaded = isDC ? "rgba(26,26,0,0.65)" : "rgba(255,255,255,0.82)"
 
-  const timeRange = `${fmt(course.start_time)} - ${fmt(course.end_time)}`
-  const prof = course.professor && course.professor !== "TBA"
-    ? nameLastFirst(course.professor)
-    : ""
-
-  // Adaptive content based on block height. Same thresholds in both modes
-  // since we render the same content hierarchy regardless of grid size.
-  const showProf = Boolean(prof) && heightPct > 0.045
-  const showTime = heightPct > 0.075
+  const prof = course.professor && course.professor !== "TBA" ? nameLastFirst(course.professor) : ""
+  const { lines, padY, padX, gap } = layoutBlock({
+    code: course.course,
+    prof,
+    start: course.start_time,
+    end: course.end_time,
+    heightPx: metrics ? heightPct * metrics.height : null,
+    colWidth: metrics?.colWidth ?? null,
+    isLarge,
+  })
 
   return (
     <div
+      title={`${course.course} · ${formatClockRange(course.start_time, course.end_time, " - ")}${prof ? ` · ${prof}` : ""}`}
       style={{
         position: "absolute",
         left: 2,
         right: 2,
         top: `${top * 100}%`,
-        height: `${Math.max(heightPct * 100, isLarge ? 5 : 4)}%`,
+        height: `${heightPct * 100}%`,
         background: bg,
         color: fg,
         borderRadius: radius,
-        padding: isLarge ? "9px 12px" : "6px 9px",
+        padding: `${padY}px ${padX}px`,
         overflow: "hidden",
         boxShadow: isDC
           ? "0 1px 0 rgba(0,0,0,0.15) inset, 0 2px 6px rgba(240,180,0,0.25)"
           : "0 1px 0 rgba(0,0,0,0.15) inset, 0 2px 4px rgba(0,0,0,0.08)",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "flex-start",
-        gap: isLarge ? 3 : 2,
       }}
     >
-      {/* Course code */}
-      <div
-        style={{
-          fontSize: isLarge ? 15 : 12,
-          fontWeight: 700,
-          letterSpacing: "0.02em",
-          lineHeight: 1.1,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {course.course}
-      </div>
-
-      {/* Instructor — "Last, First" */}
-      {showProf && (
-        <div
-          style={{
-            fontSize: isLarge ? 12 : 10,
-            fontWeight: 500,
-            color: fgFaded,
-            lineHeight: 1.15,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {prof}
-        </div>
-      )}
-
-      {/* Time */}
-      {showTime && (
-        <div
-          style={{
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: isLarge ? 11 : 9,
-            color: fgFaded,
-            lineHeight: 1,
-            marginTop: isLarge ? 2 : 0,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {timeRange}
-        </div>
-      )}
+      <BlockBody lines={lines} fg={fg} fgFaded={fgFaded} gap={gap} />
     </div>
   )
 }
@@ -375,81 +476,50 @@ function LinkedBlock({
   color,
   isLarge,
   radius,
+  metrics,
 }: {
   course: CourseEntry
   section: LinkedSection
   color: string
   isLarge: boolean
   radius: number
+  metrics: GridMetrics | null
 }) {
   const top = pos(section.start_time)
-  const heightPct = pos(section.end_time) - top
+  const heightPct = Math.max(pos(section.end_time) - top, isLarge ? 0.04 : 0.03)
 
-  // Full color matching the parent lecture — same treatment as CourseBlock,
-  // so discussions / labs / quizzes read as siblings of the lecture rather
-  // than faded satellites. The text content "{COURSE} {Type}" tells them
-  // apart visually.
-  const bg = color
+  // Full color matching the parent lecture, so discussions / labs / quizzes
+  // read as siblings of the lecture. The type label tells them apart.
   const fg = "#ffffff"
   const fgFaded = "rgba(255,255,255,0.82)"
-
-  const typeLabel = titleCase(section.section_type)
-  const codeAndType = `${course.course} ${typeLabel}`
-  const timeRange = `${fmt(section.start_time)} - ${fmt(section.end_time)}`
-  const showTime = heightPct > 0.075
+  const { lines, padY, padX, gap } = layoutBlock({
+    code: course.course,
+    type: section.section_type,
+    start: section.start_time,
+    end: section.end_time,
+    heightPx: metrics ? heightPct * metrics.height : null,
+    colWidth: metrics?.colWidth ?? null,
+    isLarge,
+  })
 
   return (
     <div
+      title={`${course.course} ${titleCase(section.section_type)} · ${formatClockRange(section.start_time, section.end_time, " - ")}`}
       style={{
         position: "absolute",
         left: 2,
         right: 2,
         top: `${top * 100}%`,
-        height: `${Math.max(heightPct * 100, isLarge ? 4 : 3)}%`,
-        background: bg,
+        height: `${heightPct * 100}%`,
+        background: color,
         color: fg,
         borderRadius: radius,
-        padding: isLarge ? "9px 12px" : "6px 9px",
+        padding: `${padY}px ${padX}px`,
         overflow: "hidden",
         boxShadow: "0 1px 0 rgba(0,0,0,0.15) inset, 0 2px 4px rgba(0,0,0,0.08)",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "flex-start",
-        gap: isLarge ? 3 : 2,
       }}
     >
-      {/* Course code + type — matches the lecture block's typography */}
-      <div
-        style={{
-          fontSize: isLarge ? 15 : 12,
-          fontWeight: 700,
-          letterSpacing: "0.02em",
-          lineHeight: 1.1,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {codeAndType}
-      </div>
-
-      {/* Time */}
-      {showTime && (
-        <div
-          style={{
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: isLarge ? 11 : 9,
-            color: fgFaded,
-            lineHeight: 1,
-            marginTop: isLarge ? 2 : 0,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {timeRange}
-        </div>
-      )}
+      <BlockBody lines={lines} fg={fg} fgFaded={fgFaded} gap={gap} />
     </div>
   )
 }
