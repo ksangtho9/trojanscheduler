@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { msSince, track } from "@/lib/analytics"
 import InputForm from "@/components/InputForm"
 import LeftPanel from "@/components/LeftPanel"
 import LoadingScreen from "@/components/LoadingScreen"
@@ -78,6 +79,11 @@ export default function Home() {
       // through to the no-schedules branch below, and an invalid term or an
       // upstream outage gets shown to the student as "adjust your constraints".
       if (!res.ok || !data) {
+        track("schedule_generation_failed", {
+          term_code: payload.term_code,
+          reason: !data ? "bad_response" : res.status >= 500 ? "http_5xx" : "http_4xx",
+          status: res.status,
+        })
         setError(
           data?.detail ??
             data?.error ??
@@ -95,6 +101,7 @@ export default function Home() {
         // Auto pick: skip the picker and resubmit with no preference
         if (payload.auto_pick_mode) {
           if (autoPickDepth >= MAX_AUTO_PICK_ROUNDS) {
+            track("schedule_generation_failed", { term_code: payload.term_code, reason: "auto_pick_unresolved" })
             setError(
               "Couldn't resolve section times automatically. Turn off auto-pick to choose them yourself."
             )
@@ -144,18 +151,30 @@ export default function Home() {
       }
 
       if (data.error || !data.schedules?.length) {
+        track("schedule_generation_failed", { term_code: payload.term_code, reason: "no_schedules" })
         setError(data.error ?? "No valid schedules found. Try adjusting your constraints.")
         setStage("form")
         return
       }
 
+      track("schedules_generated", {
+        term_code: data.term_code ?? payload.term_code,
+        required_count: payload.must_haves.length,
+        optional_count: payload.nice_to_haves.length,
+        schedules_returned: data.schedules.length,
+        auto_pick: payload.auto_pick_mode ?? false,
+        planning_mode: payload.planning_mode ?? true,
+        duration_ms: msSince(loadingStart),
+      })
       await waitForMinLoading(loadingStart)
       setResponse(data)
       setSwapState({})
       setStage("results")
     } catch (err) {
+      const timedOut = (err as Error)?.name === "AbortError"
+      track("schedule_generation_failed", { term_code: payload.term_code, reason: timedOut ? "timeout" : "network" })
       setError(
-        (err as Error)?.name === "AbortError"
+        timedOut
           ? "This took longer than expected and timed out. USC's catalogue can be slow — please try again."
           : "Could not reach the server. Please try again."
       )
@@ -202,6 +221,7 @@ export default function Home() {
       return
     }
     // Clicking a different card switches the detail view to that schedule.
+    track("schedule_selected", { rank: schedule.rank })
     setSelectedSchedule(schedule)
     setSwapState({})
     setStage("detail")
@@ -320,9 +340,10 @@ export default function Home() {
                 <ScheduleDetail
                   schedule={selectedSchedule}
                   swapState={swapState}
-                  onSwap={(originalId, replacement) =>
+                  onSwap={(originalId, replacement) => {
+                    track("course_swapped", { rank: selectedSchedule.rank })
                     setSwapState((prev) => ({ ...prev, [originalId]: replacement }))
-                  }
+                  }}
                   onStartOver={handleStartOver}
                   termCode={response.term_code}
                   termLabel={response.term_label}

@@ -5,6 +5,7 @@
 import { useState, useMemo } from "react"
 import { CourseEntry, RunnerUp, Schedule, SwapState } from "@/lib/types"
 import { generateICS } from "@/lib/icsExport"
+import { track } from "@/lib/analytics"
 import ScheduleGrid from "./ScheduleGrid"
 
 interface Props {
@@ -44,6 +45,7 @@ export default function ScheduleDetail({
       alert("Calendar export isn't available for this term yet.")
       return
     }
+    track("schedule_exported", { term_code: termCode, rank: schedule.rank, course_count: resolvedCourses.length })
     const blob = new Blob([icsString], { type: "text/calendar" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
