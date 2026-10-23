@@ -5,9 +5,11 @@ interface Props {
   onStartOver?: () => void
   /** Selected term, e.g. "Spring 2027". Omitted until terms have loaded. */
   termLabel?: string
+  /** Replays the onboarding tour. Only passed on the form, where the tour's targets live. */
+  onHelp?: () => void
 }
 
-export default function LeftPanel({ currentStep, onStartOver, termLabel }: Props) {
+export default function LeftPanel({ currentStep, onStartOver, termLabel, onHelp }: Props) {
   const eyebrow = termLabel ? `USC · ${termLabel}` : "USC"
   const steps = [
     { num: 1, label: "Add your courses & constraints" },
@@ -86,6 +88,19 @@ export default function LeftPanel({ currentStep, onStartOver, termLabel }: Props
             Start Over
           </button>
         )}
+        {onHelp && (
+          <button
+            type="button"
+            onClick={onHelp}
+            aria-label="Show the guide"
+            title="Show the guide"
+            style={{ width: 32, height: 32, margin: "-3px -6px -3px 0", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+          >
+            <span style={{ width: 24, height: 24, borderRadius: "50%", border: "1.5px solid rgba(255,255,255,0.5)", color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              ?
+            </span>
+          </button>
+        )}
       </div>
     </div>
 
@@ -133,6 +148,18 @@ export default function LeftPanel({ currentStep, onStartOver, termLabel }: Props
         <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.6, maxWidth: 160 }}>
           Build the perfect USC schedule in seconds.
         </p>
+        {onHelp && (
+          <button
+            type="button"
+            onClick={onHelp}
+            style={{ marginTop: 18, display: "inline-flex", alignItems: "center", gap: 8, background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 600 }}
+          >
+            <span style={{ width: 20, height: 20, borderRadius: "50%", border: "1.5px solid rgba(255,204,0,0.7)", color: "rgba(255,204,0,0.9)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              ?
+            </span>
+            Take the tour
+          </button>
+        )}
       </div>
       <div>
         <p

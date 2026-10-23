@@ -23,6 +23,8 @@ import {
 } from "@/lib/types"
 import LeftPanel from "./LeftPanel"
 import InfoTip from "./InfoTip"
+import Onboarding from "./Onboarding"
+import { track } from "@/lib/analytics"
 import { formatClock } from "@/lib/time"
 
 // Every course lookup in this form is term-specific. Carried by context rather
@@ -995,6 +997,8 @@ export default function InputForm({
   const [rankingsOpen, setRankingsOpen] = useState(false)
   const [planningMode, setPlanningMode] = useState(true)
   const [autoPickMode, setAutoPickMode] = useState(false)
+  // Bumped by the "?" in the header to replay the onboarding tour
+  const [tourReplay, setTourReplay] = useState(0)
   const [terms, setTerms] = useState<Term[]>([])
   // Empty until the term list resolves. The backend owns both the active set
   // and which one is default, so neither rule is duplicated here.
@@ -1334,7 +1338,15 @@ export default function InputForm({
     <TermContext.Provider value={termCode}>
     <div style={{ display: "flex", minHeight: "100vh" }}>
 
-      <LeftPanel currentStep={1} termLabel={terms.find((t) => t.term_code === termCode)?.label} />
+      <LeftPanel
+        currentStep={1}
+        termLabel={terms.find((t) => t.term_code === termCode)?.label}
+        onHelp={() => {
+          setTourReplay((n) => n + 1)
+          track("onboarding_tour_started", { source: "help" })
+        }}
+      />
+      <Onboarding replayToken={tourReplay} />
 
       <div style={{ marginLeft: "var(--content-offset)", width: "var(--content-width)", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
         <div className="app-form-inner" style={{ maxWidth: 860, margin: "0 auto", paddingTop: "calc(var(--topbar-height) + 32px)", paddingRight: 56, paddingBottom: 80, paddingLeft: 56 }}>
@@ -1358,13 +1370,13 @@ export default function InputForm({
             )}
 
             {terms.length === 1 && (
-              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", userSelect: "none" as const }}>
+              <span data-tour="term" style={{ fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", userSelect: "none" as const }}>
                 Term <span style={{ color: "var(--cardinal)" }}>{terms[0].label}</span>
               </span>
             )}
 
             {terms.length > 1 && (
-              <div className="app-mode-term flex items-center gap-2">
+              <div className="app-mode-term flex items-center gap-2" data-tour="term">
                 <span
                   title={termSource === "static"
                     ? "Backend unreachable — showing the term list bundled with this build, which may be out of date."
@@ -1401,7 +1413,7 @@ export default function InputForm({
             )}
 
             {/* Auto Pick toggle */}
-            <div className="app-mode-toggle flex items-center gap-2">
+            <div className="app-mode-toggle flex items-center gap-2" data-tour="switches">
               <span style={{ fontSize: 12, fontWeight: 600, color: autoPickMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Auto Pick
               </span>
@@ -1420,7 +1432,7 @@ export default function InputForm({
               </InfoTip>
             </div>
 
-            <div className="app-mode-toggle flex items-center gap-2">
+            <div className="app-mode-toggle flex items-center gap-2" data-tour="switches">
               <span style={{ fontSize: 12, fontWeight: 600, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Planning Mode
               </span>
@@ -1447,7 +1459,7 @@ export default function InputForm({
           )}
 
           {/* Required courses */}
-          <section style={{ marginBottom: 28 }}>
+          <section data-tour="courses" style={{ marginBottom: 28 }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
               <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase" as const, color: "var(--text-secondary)" }}>
                 Required courses
@@ -1505,7 +1517,7 @@ export default function InputForm({
           <div style={{ height: 1, background: "var(--border-subtle)", marginBottom: 28 }} />
 
           {/* Class window */}
-          <section style={{ marginBottom: 28 }}>
+          <section data-tour="limits" style={{ marginBottom: 28 }}>
             <h2 style={{ margin: "0 0 16px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase" as const, color: "var(--text-secondary)" }}>
               Class window
             </h2>
@@ -1671,7 +1683,7 @@ export default function InputForm({
 
         <div className="app-submit-footer" style={{ position: "fixed", bottom: 0, left: "var(--content-offset)", right: 0, zIndex: 50, background: "var(--bg-page)", borderTop: "1px solid var(--border-subtle)", padding: "14px 56px" }}>
           <div style={{ maxWidth: 860, margin: "0 auto" }}>
-            <button type="button" onClick={handleSubmit} className="btn-primary w-full py-3 text-sm gap-2 rounded-xl">
+            <button type="button" onClick={handleSubmit} data-tour="build" className="btn-primary w-full py-3 text-sm gap-2 rounded-xl">
               <SparkleIcon />
               Build My Schedule
             </button>

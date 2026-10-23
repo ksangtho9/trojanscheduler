@@ -12,6 +12,7 @@
 //   schedule_selected           a schedule card was opened
 //   course_swapped              a section was swapped in the detail view
 //   schedule_exported           a schedule was downloaded as .ics
+//   onboarding_*                first-visit guide: shown, tour started, skipped (where), completed
 
 import posthog from "posthog-js"
 
@@ -63,6 +64,10 @@ type EventProps = {
   schedule_selected: { rank: number }
   course_swapped: { rank: number }
   schedule_exported: { term_code?: string; rank: number; course_count: number }
+  onboarding_shown: Record<string, never>
+  onboarding_tour_started: { source: "welcome" | "help" }
+  onboarding_skipped: { at: string }
+  onboarding_completed: Record<string, never>
 }
 
 export function track<E extends keyof EventProps>(event: E, props: EventProps[E]): void {
