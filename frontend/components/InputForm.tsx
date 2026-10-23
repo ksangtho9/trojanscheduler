@@ -1557,6 +1557,7 @@ export default function InputForm({
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div
+                data-tour-end="limits"
                 className="form-toggle-box flex items-center justify-between gap-2 cursor-pointer"
                 onClick={() => {
                   setShowDaysOff((v) => {

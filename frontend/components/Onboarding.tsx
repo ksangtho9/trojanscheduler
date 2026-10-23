@@ -86,13 +86,20 @@ function visibleTargets(id: string): HTMLElement[] {
   })
 }
 
-function unionRect(els: HTMLElement[]): Rect | null {
+function unionRect(els: HTMLElement[], id?: string): Rect | null {
   if (!els.length) return null
   const rs = els.map((el) => el.getBoundingClientRect())
   const top = Math.min(...rs.map((r) => r.top))
   const left = Math.min(...rs.map((r) => r.left))
-  const bottom = Math.max(...rs.map((r) => r.bottom))
+  let bottom = Math.max(...rs.map((r) => r.bottom))
   const right = Math.max(...rs.map((r) => r.right))
+  // A step can end its highlight at a child marked data-tour-end, so a long
+  // section highlights only what the step talks about (whole rows, never sliced).
+  const end = id ? document.querySelector<HTMLElement>(`[data-tour-end="${id}"]`) : null
+  if (end) {
+    const r = end.getBoundingClientRect()
+    if (r.height > 0) bottom = Math.min(bottom, r.bottom)
+  }
   return { top, left, width: right - left, height: bottom - top }
 }
 
@@ -329,7 +336,7 @@ function Tour({
       return
     }
     const first = els[0]
-    const r = unionRect(els)!
+    const r = unionRect(els, current.target)!
     const isFixed = getComputedStyle(first).position === "fixed" || first.closest(".app-submit-footer") !== null
     if (!isFixed) {
       const topbar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--topbar-height")) || 0
@@ -339,7 +346,7 @@ function Tour({
         : window.scrollY + r.top - (window.innerHeight - r.height) / 2
       window.scrollTo({ top: Math.max(0, target), behavior: "auto" })
     }
-    const update = () => setRect(unionRect(visibleTargets(current.target)))
+    const update = () => setRect(unionRect(visibleTargets(current.target), current.target))
     update()
     window.addEventListener("resize", update)
     window.addEventListener("scroll", update, { passive: true })
