@@ -47,6 +47,22 @@ class FakeClient:
         ]})
 
 
+class FakeMultiClient:
+    """One department returning several prefixes, e.g. {"CSCI": 40, "MATH": 960}."""
+
+    def __init__(self, counts: dict[str, int]):
+        self.counts = counts
+
+    async def get(self, url, params=None, timeout=None):
+        if url.endswith("/Programs/TermCode"):
+            return FakeResponse([{"prefix": "ALL", "schools": [{"prefix": "ENGV"}]}])
+        return FakeResponse({"courses": [
+            {"prefix": prefix, "classNumber": f"{100 + i}", "name": f"{prefix} {i}", "courseUnits": ["4"]}
+            for prefix, n in self.counts.items()
+            for i in range(n)
+        ]})
+
+
 def with_temp_public(fn):
     """Redirect generated output into a temp dir for the duration of a test."""
     def wrapper():
@@ -118,6 +134,26 @@ def test_equal_totals_are_not_treated_as_a_shrink(tmp):
     assert result is True, "an unchanged total must still report success"
 
 
+@with_temp_public
+def test_small_real_shrink_is_accepted(tmp):
+    # Mid-term cancellations: a couple of courses vanish. That is real change,
+    # not a failed fetch, and must not fail the weekly refresh.
+    run(G.generate_for_term("20263", FakeMultiClient({"CSCI": 100, "MATH": 100}), force=False))
+    result = run(G.generate_for_term("20263", FakeMultiClient({"CSCI": 99, "MATH": 98}), force=False))
+    assert result is True, "a <3% shrink with no department collapse must be accepted"
+    assert len(json.load(open(G.out_path("20263")))) == 197, "the smaller, real list should be written"
+
+
+@with_temp_public
+def test_one_truncated_department_is_refused(tmp):
+    # The USC failure mode: one department comes back short while the total
+    # barely moves (CSCI 40 -> 28 is -30%, the term overall only -1.2%).
+    run(G.generate_for_term("20263", FakeMultiClient({"CSCI": 40, "MATH": 960}), force=False))
+    result = run(G.generate_for_term("20263", FakeMultiClient({"CSCI": 28, "MATH": 960}), force=False))
+    assert result is False, "a department losing 25%+ must be refused even if the total looks fine"
+    assert len(json.load(open(G.out_path("20263")))) == 1000, "the existing file must survive"
+
+
 TESTS = [
     test_successful_run_reports_success,
     test_successful_run_writes_the_expected_courses,
@@ -125,6 +161,8 @@ TESTS = [
     test_shrink_guard_refuses_and_reports_failure,
     test_force_overrides_the_shrink_guard,
     test_equal_totals_are_not_treated_as_a_shrink,
+    test_small_real_shrink_is_accepted,
+    test_one_truncated_department_is_refused,
 ]
 
 

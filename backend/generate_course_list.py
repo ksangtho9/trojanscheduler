@@ -4,7 +4,7 @@ Fetches all courses across all USC departments using the existing scraper infras
 Run from the backend directory with the venv active:
     python generate_course_list.py                  # every active term
     python generate_course_list.py --term 20261     # just one term
-    python generate_course_list.py --force          # overwrite even if a total shrinks
+    python generate_course_list.py --force          # overwrite even if the shrink guard objects
 
 Writes one file per term: frontend/public/courses.<termCode>.json. The term
 suffix is what lets the term picker offer three terms without the autocomplete
@@ -163,19 +163,47 @@ async def generate_for_term(term_code: str, client: httpx.AsyncClient, force: bo
         print("No prefix lost courses vs the existing file.")
     print("=" * 60)
 
-    if new_total < old_total and not force:
+    suspects = truncation_suspects(old_total, new_total, old_pre, new_pre)
+    if suspects and not force:
         print(
-            f"\nREFUSING to overwrite: new total ({new_total}) < existing ({old_total}).\n"
-            f"This usually means some department fetches failed. Re-run, or pass --force "
-            f"(or FORCE=1) to overwrite anyway."
+            f"\nREFUSING to overwrite: this looks like failed department fetches, not real change.\n"
+            + "".join(f"  - {reason}\n" for reason in suspects)
+            + "Re-run, or pass --force (or FORCE=1) to overwrite anyway."
         )
         return False
+    if new_total < old_total:
+        print(f"\nSmall shrink ({old_total} -> {new_total}) accepted: within normal cancellation churn.")
 
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(courses, f, separators=(",", ":"))
 
     print(f"\nWritten to {OUT_PATH}")
     return True
+
+
+# --- Shrink guard thresholds --------------------------------------------------
+# Under load the USC API silently truncates a department's list (DSO 110 -> 1,
+# CSCI 80 -> 54), so a refresh must not blindly overwrite. But courses really do
+# disappear mid-term (cancelled sections, a finished summer term), and refusing
+# every shrink made the weekly refresh fail forever. Refuse only the truncation
+# pattern: a big total drop, or one sizeable department losing a big share.
+MAX_TOTAL_DROP = 0.03           # refuse if the term loses more than 3% of courses
+PREFIX_MIN_COURSES = 5          # only judge departments with at least this many
+MAX_PREFIX_DROP = 0.25          # refuse if such a department loses 25%+ of its courses
+
+
+def truncation_suspects(old_total: int, new_total: int, old_pre: Counter, new_pre: Counter) -> list[str]:
+    """Reasons this refresh looks like failed fetches. Empty list = safe to write."""
+    reasons: list[str] = []
+    if old_total and (old_total - new_total) / old_total > MAX_TOTAL_DROP:
+        reasons.append(
+            f"total fell {old_total} -> {new_total} ({(old_total - new_total) / old_total:.1%}, limit {MAX_TOTAL_DROP:.0%})"
+        )
+    for prefix, old_n in sorted(old_pre.items()):
+        new_n = new_pre.get(prefix, 0)
+        if old_n >= PREFIX_MIN_COURSES and (old_n - new_n) / old_n >= MAX_PREFIX_DROP:
+            reasons.append(f"{prefix} fell {old_n} -> {new_n} ({(old_n - new_n) / old_n:.0%})")
+    return reasons
 
 
 async def main():

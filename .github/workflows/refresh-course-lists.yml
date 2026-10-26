@@ -40,7 +40,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
+      # The shrink guard exits 1 when it refuses to overwrite a term. Keep
+      # going anyway: the other terms were still written and deserve a PR. The
+      # last step re-fails the run so a skipped term doesn't go unnoticed.
       - name: Regenerate course lists
+        id: regen
+        continue-on-error: true
         working-directory: backend
         run: python generate_course_list.py ${{ inputs.force && '--force' || '' }}
 
@@ -64,4 +69,11 @@ jobs:
           add-paths: |
             frontend/public/courses.*.json
             frontend/public/ge_courses.*.json
+            frontend/public/terms.json
           delete-branch: true
+
+      - name: Fail if the shrink guard skipped a term
+        if: steps.regen.outcome == 'failure'
+        run: |
+          echo "::error::The course generator refused to overwrite at least one term (looks like failed USC fetches). Other terms were still refreshed. Open the 'Regenerate course lists' log for the department breakdown, then re-run, or run manually with force."
+          exit 1
