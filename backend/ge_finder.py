@@ -167,6 +167,36 @@ async def fetch_ge_course_codes(
     return codes
 
 
+# GE-only prefixes (no department in /Programs/TermCode) → the GE category that
+# lists them. Their sections exist only in that category's GeCoursesByTerm feed.
+GE_ONLY_PREFIX_CATEGORY: dict[str, str] = {"GESM": "GESM"}
+
+
+async def ge_only_course_sections(
+    code: str, client: httpx.AsyncClient, term_code: str
+) -> list[dict] | None:
+    """
+    Sections for a course whose prefix has no department (GESM), read from the
+    GE listing. Returns None when the prefix isn't GE-only (caller should use
+    the normal department path), [] when the course isn't offered.
+    """
+    parts = code.split()
+    category = GE_ONLY_PREFIX_CATEGORY.get(parts[0]) if parts else None
+    if not category:
+        return None
+    objects = _ge_course_objects.get(term_code, {})
+    if code not in objects:
+        await fetch_ge_course_codes(category, client, term_code, block_on_miss=True)
+        objects = _ge_course_objects.get(term_code, {})
+        if code not in objects:
+            # A cached code list doesn't refill the objects; fetch the listing directly
+            req_prefix, cat_prefix = CATEGORY_PREFIX_MAP[category]
+            await _fetch_ge_codes_from_usc(req_prefix, cat_prefix, client, term_code)
+            objects = _ge_course_objects.get(term_code, {})
+    course = objects.get(code)
+    return extract_sections(course) if course else []
+
+
 async def warm_ge_departments(
     school_lookup: dict[str, str],
     client: httpx.AsyncClient,

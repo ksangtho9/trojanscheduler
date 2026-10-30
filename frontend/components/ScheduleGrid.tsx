@@ -446,7 +446,7 @@ function CourseBlock({
 
   return (
     <div
-      title={`${course.course} · ${formatClockRange(course.start_time, course.end_time, " - ")}${prof ? ` · ${prof}` : ""}`}
+      title={`${course.course}${course.topic ? ` · ${course.topic}` : ""} · ${formatClockRange(course.start_time, course.end_time, " - ")}${prof ? ` · ${prof}` : ""}`}
       style={{
         position: "absolute",
         left: 2,

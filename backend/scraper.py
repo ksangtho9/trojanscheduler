@@ -155,6 +155,8 @@ def _parse_section(sec: dict, is_secondary: bool = False) -> dict:
     return {
         "section_id":      sec.get("sisSectionId", ""),
         "section_type":    sec.get("rnrMode", "Lecture"),
+        # Per-section topic, e.g. GESM 110 "Women in Hip Hop". Empty for most courses.
+        "topic":           (sec.get("name") or "").strip() or None,
         "professor":       professor,
         "days":            schedule.get("days", []),
         "start_time":      schedule.get("startTime", ""),

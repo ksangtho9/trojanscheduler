@@ -65,6 +65,7 @@ interface Entry {
 
 interface SectionOption {
   section_id: string
+  topic?: string | null           // GESM sections each have their own topic
   professor: string
   days: string[]
   start_time: string
@@ -257,9 +258,10 @@ function useCourseOptions(code: string, termCode: string) {
 function formatSectionLabel(s: SectionOption): string {
   const days = s.days.join("/")
   const time = `${s.start_time} to ${s.end_time}`
-  if (s.seats_available === 0) return `${days} ${time}`
+  const topic = s.topic ? `${s.topic}  ·  ` : ""
+  if (s.seats_available === 0) return `${topic}${days} ${time}`
   const seats = s.seats_available === 1 ? "1 seat" : `${s.seats_available} seats`
-  return `${days} ${time}  ·  ${seats} open`
+  return `${topic}${days} ${time}  ·  ${seats} open`
 }
 
 function ProfessorDropdown({
@@ -390,6 +392,8 @@ function SectionDropdown({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  // Topic-based sections (GESM seminars) are chosen by topic, not by time
+  const anyLabel = sections.some((s) => s.topic) ? "Any topic" : "Any time"
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -424,7 +428,7 @@ function SectionDropdown({
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {selected ? formatSectionLabel(selected) : "Any time"}
+          {selected ? formatSectionLabel(selected) : anyLabel}
         </span>
         <span style={{ flexShrink: 0, color: "var(--text-tertiary)", fontSize: "11px" }}>▾</span>
       </button>
@@ -458,7 +462,7 @@ function SectionDropdown({
             onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
-            Any time
+            {anyLabel}
           </div>
           {sections.map((s) => {
             const isFull = s.seats_available === 0
@@ -1093,6 +1097,9 @@ export default function InputForm({
       // course inside that category. Submit it as ge_code so the backend's
       // auto_select_ge restricts that GE slot to this exact course.
       ge_code: e.code.trim().toUpperCase().replace(/-/g, " ") || undefined,
+      // Only meaningful with a specific ge_code (e.g. one GESM topic)
+      professor: (e.code.trim() && e.professor.trim()) || undefined,
+      section_id: (e.code.trim() && e.section_id.trim()) || undefined,
     }
   }
 
@@ -2149,7 +2156,7 @@ function EntryEditor({
             onChange={(e) =>
               // Reset any picked specific course when the category changes
               // (the previous pick won't belong to the new category).
-              updateEntry(list, setList, entry.id, { category: e.target.value, code: "" })
+              updateEntry(list, setList, entry.id, { category: e.target.value, code: "", professor: "", section_id: "" })
             }
           >
             <option value="">Select GE category…</option>
@@ -2179,7 +2186,26 @@ function EntryEditor({
               <GeCourseDropdown
                 category={entry.category}
                 value={entry.code}
-                onChange={(code) => updateEntry(list, setList, entry.id, { code })}
+                onChange={(code) => updateEntry(list, setList, entry.id, { code, professor: "", section_id: "" })}
+              />
+            </div>
+          )}
+
+          {/* A specific GE class can be pinned further to one professor or
+              section. Matters most for GESM, where each section is a
+              different seminar topic. */}
+          {entry.category && entry.code && (
+            <div style={{ marginTop: 10 }}>
+              <CourseDetailsSelectors
+                code={entry.code}
+                professor={entry.professor}
+                sectionId={entry.section_id}
+                onProfessorChange={(prof) =>
+                  updateEntry(list, setList, entry.id, { professor: prof, section_id: "" })
+                }
+                onSectionChange={(sid, prof) =>
+                  updateEntry(list, setList, entry.id, { section_id: sid, professor: prof || entry.professor })
+                }
               />
             </div>
           )}

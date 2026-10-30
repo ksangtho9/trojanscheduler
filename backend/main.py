@@ -259,10 +259,18 @@ async def course_options(code: str, term: str | None = None):
     Does not clear the dept cache — acts as a read-only preview.
     """
     from scraper import scrape_course
+    from ge_finder import ge_only_course_sections
     term_code = await _resolve_term_or_400(term)
     school_lookup = await get_school_lookup(term_code)
+    normalized = normalize_code(code)
     try:
-        raw = await scrape_course(code.strip().upper(), http_client, school_lookup, term_code)
+        # GESM has no department; its sections only exist in the GE listing
+        raw = await ge_only_course_sections(normalized, http_client, term_code)
+        if raw is None:
+            raw = await scrape_course(normalized, http_client, school_lookup, term_code)
+    except AmbiguousCourseCode:
+        # "CHEM 105" with 105A/105B: no single course to describe
+        return {"professors": [], "sections": []}
     except UpstreamError as e:
         # These dropdowns refine a course entry; they never block one. Answer
         # with the empty-but-well-formed shape so the form keeps working — an
@@ -279,6 +287,7 @@ async def course_options(code: str, term: str | None = None):
         [
             {
                 "section_id": s["section_id"],
+                "topic": s.get("topic"),
                 "professor": s["professor"],
                 "days": s["days"],
                 "start_time": s["start_time"],
@@ -406,6 +415,7 @@ async def generate(req: GenerateRequest):
                 seats_available=s["seats_available"],
                 total_seats=s.get("total_seats", 0),
                 ge_categories=s.get("ge_categories", []),
+                topic=s.get("topic"),
                 linked_sections=linked,
             ))
         return result

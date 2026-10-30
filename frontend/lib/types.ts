@@ -111,6 +111,7 @@ export interface LinkedSection {
 export interface RunnerUp {
   course: string
   section_id: string
+  topic?: string | null
   professor: string
   rmp_score: number
   days: string[]
@@ -129,6 +130,7 @@ export interface CourseEntry {
   // Identity
   course: string                  // e.g. "CSCI 270"
   section_id: string
+  topic?: string | null           // per-section topic, e.g. GESM 110 "Women in Hip Hop"
   section_type: SectionType       // "lecture" | "seminar" | etc.
   professor: string
 

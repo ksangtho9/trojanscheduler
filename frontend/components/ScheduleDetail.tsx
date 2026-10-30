@@ -143,6 +143,7 @@ export default function ScheduleDetail({
                   ...course,
                   course: runner.course,
                   section_id: runner.section_id,
+                  topic: runner.topic ?? null,
                   professor: runner.professor,
                   rmp_score: runner.rmp_score,
                   rmp_difficulty: null,
@@ -311,6 +312,11 @@ function CourseRow({
           >
             {course.course}
           </span>
+          {course.topic && (
+            <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-secondary)" }}>
+              {course.topic}
+            </span>
+          )}
 
           {course.entry_type === "ge" && course.ge_slot && (
             <Chip
@@ -676,6 +682,11 @@ function RunnerUpRow({
             {runner.rmp_score.toFixed(1)} RMP
           </span>
         </div>
+        {runner.topic && (
+          <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 2 }}>
+            {runner.topic}
+          </p>
+        )}
         <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 4 }}>
           {runner.professor}
         </p>

@@ -123,6 +123,36 @@ def test_gesm_sections_come_from_the_ge_listing():
     assert total >= 1, f"expected a GESM candidate, got {pools}"
 
 
+# ── Section topics (GESM 110 "Women in Hip Hop") ─────────────────────────────
+
+def test_section_topic_is_kept():
+    sec = {"sisSectionId": "35276", "rnrMode": "Lecture", "name": "Women in Hip Hop",
+           "schedule": [{"days": ["Tue", "Thu"], "startTime": "11:00", "endTime": "12:20"}],
+           "instructors": [], "units": ["4"], "totalSeats": 2, "registeredSeats": 1}
+    parsed = scraper._parse_section(sec)
+    assert parsed["topic"] == "Women in Hip Hop", parsed
+    assert scraper._parse_section({**sec, "name": ""})["topic"] is None, "blank names must not become topics"
+
+
+def test_ge_only_sections_come_from_the_listing():
+    term = "29992"
+    ge_finder._ge_course_objects[term] = {"GESM 110": raw("GESM", "110")}
+
+    def fake_extract(course):
+        return [{"section_id": "35276", "topic": "Women in Hip Hop"}]
+
+    original = ge_finder.extract_sections
+    ge_finder.extract_sections = fake_extract
+    try:
+        got = asyncio.run(ge_finder.ge_only_course_sections("GESM 110", None, term))
+        assert got and got[0]["topic"] == "Women in Hip Hop", got
+        # Not a GE-only prefix → None, so the caller uses the department path
+        assert asyncio.run(ge_finder.ge_only_course_sections("CHEM 105A", None, term)) is None
+    finally:
+        ge_finder.extract_sections = original
+        ge_finder._ge_course_objects.pop(term, None)
+
+
 TESTS = [
     test_normalize_accepts_the_ways_students_type_codes,
     test_canonical_code_keeps_the_letter,
@@ -132,6 +162,8 @@ TESTS = [
     test_unlettered_courses_still_work,
     test_scrape_course_raises_for_ambiguous_codes,
     test_gesm_sections_come_from_the_ge_listing,
+    test_section_topic_is_kept,
+    test_ge_only_sections_come_from_the_listing,
 ]
 
 

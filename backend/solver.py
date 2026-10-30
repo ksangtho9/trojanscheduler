@@ -72,6 +72,7 @@ class Section:
     seats_available: int
     total_seats: int
     ge_categories: list[str]    # e.g. ["C", "D"] — empty if not a GE course
+    topic: Optional[str] = None  # per-section topic (GESM "Women in Hip Hop"); None for most courses
 
     # RMP data — populated by rmp.py before solver runs
     rmp_score: float = 3.0
@@ -1424,6 +1425,7 @@ def _serialize_pair(pair: SectionPair, seat_color: str) -> dict:
         "course": lec.course,
         "section_id": lec.section_id,
         "section_type": lec.section_type,
+        "topic": lec.topic,
         "professor": lec.professor,
         "rmp_score": lec.rmp_score,
         "rmp_difficulty": lec.rmp_difficulty,
@@ -1462,6 +1464,7 @@ def _serialize_runner_ups(runner_ups: Optional[list]) -> Optional[list]:
             result.append({
                 "course": r.lecture.course,
                 "section_id": r.lecture.section_id,
+                "topic": r.lecture.topic,
                 "professor": r.lecture.professor,
                 "rmp_score": r.lecture.rmp_score,
                 "days": r.lecture.days,
