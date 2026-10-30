@@ -24,7 +24,7 @@ DEBUG_TIMING = os.getenv("TROJAN_DEBUG_TIMING", "").lower() in ("1", "true", "ye
 # test_solver.py. Set GE_POOL_CAP=0 to disable.
 GE_POOL_CAP = int(os.getenv("GE_POOL_CAP", "40"))
 
-from scraper import build_school_lookup, HTTP_HEADERS, UpstreamError
+from scraper import build_school_lookup, AmbiguousCourseCode, HTTP_HEADERS, UpstreamError, normalize_code
 
 # --- Pydantic models ---
 
@@ -94,12 +94,14 @@ def _resolve_entry(entry: CourseInput) -> tuple[str | None, str | None, str | No
     """Return (code, professor, section_id), applying search_query parsing if set."""
     if entry.search_query and entry.type == "course":
         parsed = parse_course_query(entry.search_query)
+        code = parsed["code"] or entry.code
         return (
-            parsed["code"] or entry.code,
+            normalize_code(code) if code else code,
             parsed["professor"] or entry.professor,
             parsed["section_id"] or entry.section_id,
         )
-    return entry.code, entry.professor, entry.section_id
+    # "chem105b" → "CHEM 105B", so schedules and section prefs use one spelling
+    return (normalize_code(entry.code) if entry.code else entry.code), entry.professor, entry.section_id
 
 # --- App state ---
 
@@ -307,7 +309,7 @@ async def generate(req: GenerateRequest):
     school_lookup = await get_school_lookup(term_code)
 
     linked_prefs: dict[str, dict[str, str]] = {
-        code: dict(prefs) for code, prefs in (req.linked_section_preferences or {}).items()
+        normalize_code(code): dict(prefs) for code, prefs in (req.linked_section_preferences or {}).items()
     }
 
     # Per-phase timing (see DEBUG_TIMING). _clock is monotonic; each phase records
@@ -340,6 +342,13 @@ async def generate(req: GenerateRequest):
     scraped: dict[str, list] = {}
     failed_codes: set[str] = set()
     for code, res in zip(codes, results):
+        if isinstance(res, AmbiguousCourseCode):
+            # "CHEM 105" when only 105A / 105B exist: ask, don't guess
+            others = " and ".join(res.variants) if len(res.variants) == 2 else ", ".join(res.variants)
+            raise HTTPException(
+                status_code=400,
+                detail=f"{res.code} has separate parts: {others}. Add the one you're taking.",
+            )
         if isinstance(res, BaseException):
             print(f"scrape failed for {code} ({term_code}): {res}")
             failed_codes.add(code)

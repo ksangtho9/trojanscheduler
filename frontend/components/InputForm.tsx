@@ -147,8 +147,9 @@ function entryFilled(e: Entry): boolean {
 
 function pillLabel(e: Entry): string {
   if (e.type === "ge") {
-    if (e.category === "GESM") return "GESM"
-    if (e.category) return `GE ${e.category}`
+    const picked = e.code.trim().toUpperCase().replace(" ", "-")
+    if (e.category === "GESM") return picked || "GESM"
+    if (e.category) return picked ? `GE ${e.category}: ${picked}` : `GE ${e.category}`
     return "GE"
   }
   return e.code.trim().toUpperCase().replace(" ", "-") || "Course"
@@ -525,8 +526,16 @@ function DeptCourseSearchInput({
   placeholder: string
 }) {
   const termCode = useTermCode()
-  const courses = useCourses(termCode)
+  const catalog = useCourses(termCode)
   const geCourses = useGeCourses(termCode)
+  // GESM seminars aren't in the department catalog (USC lists them only as a GE
+  // category), so add them to the search pool. Picking one becomes a GESM GE
+  // entry pinned to that course; see commitCourse.
+  const gesmCodes = useMemo(() => new Set((geCourses["GESM"] || []).map((c) => c.code.toUpperCase())), [geCourses])
+  const courses = useMemo(() => {
+    const known = new Set(catalog.map((c) => c.code.toUpperCase()))
+    return [...catalog, ...(geCourses["GESM"] || []).filter((c) => !known.has(c.code.toUpperCase()))]
+  }, [catalog, geCourses])
   const [open, setOpen] = useState(false)
   const [geExpanded, setGeExpanded] = useState(false)
   // When set, the GE drill-down is showing the per-category course list
@@ -597,7 +606,13 @@ function DeptCourseSearchInput({
   }
 
   const commitCourse = (code: string) => {
-    onCommitCourse(code.replace(/-/g, " "))
+    const normalized = code.replace(/-/g, " ").trim().toUpperCase().replace(/^([A-Z]+)\s*(\d)/, "$1 $2")
+    if (normalized.startsWith("GESM")) {
+      // A specific seminar → GESM GE entry pinned to it; bare "GESM" → any seminar
+      onCommitGE("GESM", gesmCodes.has(normalized) ? normalized : undefined)
+    } else {
+      onCommitCourse(normalized)
+    }
     onChange("")
     closeAll()
   }

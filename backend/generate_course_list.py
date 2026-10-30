@@ -24,7 +24,7 @@ import sys
 from collections import Counter
 
 import httpx
-from scraper import build_school_lookup, HTTP_HEADERS, BASE_URL
+from scraper import build_school_lookup, canonical_code, HTTP_HEADERS, BASE_URL
 from terms import default_term, fetch_active_terms, term_label
 
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend", "public")
@@ -117,7 +117,8 @@ async def generate_for_term(term_code: str, client: httpx.AsyncClient, force: bo
             title = (c.get("name") or "").strip()
             if not prefix or not number:
                 continue
-            code = f"{prefix} {number}"
+            # Keep the A/B letter: CHEM 105A and 105B are different courses
+            code = canonical_code(c)
             units_raw = c.get("courseUnits") or []
             units = units_raw[0] if units_raw else None
             if code not in seen:

@@ -34,6 +34,12 @@ _GE_CODES_TTL = float(os.getenv("GE_CODES_TTL", "3600"))  # seconds, default 1h
 _ge_codes_cache: dict[str, tuple[float, list[str]]] = {}
 _ge_codes_inflight: set[str] = set()
 
+# Full course objects (with sections) from GeCoursesByTerm, keyed term → code.
+# Needed for GE-only prefixes like GESM: they aren't in /Programs/TermCode, so
+# there is no school to fetch their department with, and this response is the
+# only place their sections appear. Refreshed whenever the code lists are.
+_ge_course_objects: dict[str, dict[str, dict]] = {}
+
 
 # Letter → (geRequirementPrefix, categoryPrefix) on USC's official map.
 # Source: /api/Ge/TermCode → Fall2015OrLater group.
@@ -81,11 +87,13 @@ async def _fetch_ge_codes_from_usc(
 
     seen: set[str] = set()
     codes: list[str] = []
+    objects = _ge_course_objects.setdefault(term_code, {})
     for c in courses:
         code = (c.get("fullCourseName") or "").strip().upper()
         if code and code not in seen:
             seen.add(code)
             codes.append(code)
+            objects[code] = c
     return codes
 
 
@@ -277,7 +285,16 @@ async def build_ge_candidates(
         """Return [(course_code, sections), ...] for the wanted courses in this dept."""
         school = school_lookup.get(dept)
         if not school:
-            return []
+            # GE-only prefix (GESM): no department to fetch, so use the sections
+            # that came with the GE listing itself.
+            objects = _ge_course_objects.get(term_code, {})
+            results: list[tuple[str, list[dict]]] = []
+            for code in sorted(wanted):
+                course = objects.get(code)
+                sections = extract_sections(course) if course else []
+                if sections:
+                    results.append((code, sections))
+            return results
         async with semaphore:
             try:
                 courses = await fetch_dept_courses(

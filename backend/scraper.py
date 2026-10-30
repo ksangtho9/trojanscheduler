@@ -1,6 +1,8 @@
 import asyncio
 import os
 import time
+import re
+
 import httpx
 
 # How long a fetched department catalog stays usable before we re-fetch it.
@@ -33,6 +35,15 @@ RETRY_DEADLINE_S = float(os.getenv("USC_RETRY_DEADLINE_S", "30"))
 
 class UpstreamError(RuntimeError):
     """A USC SOC API call failed after exhausting its retries."""
+
+
+class AmbiguousCourseCode(ValueError):
+    """A bare code ('CHEM 105') names several lettered courses (105A, 105B)."""
+
+    def __init__(self, code: str, variants: list[str]):
+        self.code = code
+        self.variants = variants
+        super().__init__(f"{code} is ambiguous: {', '.join(variants)}")
 
 
 async def _get_json(
@@ -154,6 +165,60 @@ def _parse_section(sec: dict, is_secondary: bool = False) -> dict:
         "total_seats":     total_seats,
         "modality":        MODALITY_MAP.get(sec.get("rnrMode", ""), "in_person"),
     }
+
+
+# --- Course codes --------------------------------------------------------------
+# USC splits a code into classNumber "105" + sequence "A" (and returns the joined
+# form as fullCourseName "CHEM 105A"). Lettered courses are different courses:
+# CHEM 105A and 105B have separate sections. Every code we build or match must
+# keep the letter, or "CHEM 105" silently resolves to whichever variant is first.
+
+_CODE_RE = re.compile(r"^([A-Z]+)\s*-?\s*(\d+[A-Z]*)$")
+
+
+def normalize_code(code: str) -> str:
+    """'chem105a', 'CHEM-105A', ' chem  105a ' -> 'CHEM 105A'. Unparseable input is just upper-cased."""
+    cleaned = " ".join((code or "").strip().upper().replace("-", " ").split())
+    m = _CODE_RE.match(cleaned)
+    return f"{m.group(1)} {m.group(2)}" if m else cleaned
+
+
+def canonical_code(course: dict) -> str:
+    """Canonical code for a raw USC course object, letter included ('CHEM 105A')."""
+    full = (course.get("fullCourseName") or "").strip()
+    if full:
+        return normalize_code(full)
+    prefix = (course.get("prefix") or "").strip().upper()
+    number = (course.get("classNumber") or "").strip().upper()
+    sequence = (course.get("sequence") or "").strip().upper()
+    return f"{prefix} {number}{sequence}".strip()
+
+
+def find_course(courses: list[dict], requested: str) -> dict | None:
+    """
+    The course matching a requested code. Exact canonical match first. A bare
+    number ("CHEM 115") resolves only when exactly one variant exists (115B);
+    with several (105A and 105B) it returns None rather than guess.
+    """
+    want = normalize_code(requested)
+    for c in courses:
+        if canonical_code(c) == want:
+            return c
+    parts = want.split()
+    if len(parts) == 2 and parts[1].isdigit():
+        variants = [c for c in courses if (c.get("classNumber") or "").strip() == parts[1]]
+        if len(variants) == 1:
+            return variants[0]
+    return None
+
+
+def lettered_variants(courses: list[dict], requested: str) -> list[str]:
+    """For a bare 'CHEM 105' with several variants: ['CHEM 105A', 'CHEM 105B']. Else []."""
+    parts = normalize_code(requested).split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        return []
+    codes = sorted(canonical_code(c) for c in courses if (c.get("classNumber") or "").strip() == parts[1])
+    return codes if len(codes) > 1 else []
 
 
 def extract_sections(course: dict) -> list[dict]:
@@ -335,18 +400,21 @@ async def scrape_course(
     block_on_miss=False (the /generate request path) serves from the cache
     snapshot and never blocks on a cold fetch — see _get_dept_courses.
     """
-    parts = course_code.strip().upper().split()
+    parts = normalize_code(course_code).split()
     if len(parts) < 2:
         return []
-    dept, number = parts[0], parts[1]
+    dept = parts[0]
 
     school = school_lookup.get(dept)
     if not school:
         return []
 
     courses = await _get_dept_courses(dept, school, client, term_code, block_on_miss)
-    course = next((c for c in courses if c.get("classNumber") == number), None)
+    course = find_course(courses, course_code)
     if not course:
+        variants = lettered_variants(courses, course_code)
+        if variants:
+            raise AmbiguousCourseCode(normalize_code(course_code), variants)
         return []
 
     return extract_sections(course)
@@ -399,8 +467,7 @@ def lookup_section_in_cache(section_id: str, term_code: str) -> str | None:
         for course in courses:
             for sec in (course.get("sections") or []):
                 if sec.get("sisSectionId") == section_id:
-                    dept = course.get("prefix") or ""
-                    number = course.get("classNumber") or ""
-                    if dept and number:
-                        return f"{dept} {number}"
+                    code = canonical_code(course)
+                    if code.strip():
+                        return code
     return None
