@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Schedule, CourseEntry, LinkedSection } from "@/lib/types"
 import { clockMinutes, formatClock, formatClockRange } from "@/lib/time"
+import { COURSE_PALETTE, GE_COLOR, assignCourseColors } from "@/lib/courseColors"
 
 interface Props {
   schedule: Schedule
@@ -17,56 +18,14 @@ const START_MIN = 8 * 60   // 8:00
 const END_MIN = 20 * 60    // 20:00
 const SPAN = END_MIN - START_MIN
 
-// Tasteful, distinguishable palette. Cardinal sits at index 0 so the USC
-// signature anchors when a schedule has only one course.
-const COURSE_PALETTE = [
-  "#A30019", // USC cardinal
-  "#3730A3", // indigo
-  "#047857", // emerald
-  "#6D28D9", // violet
-  "#B45309", // amber
-  "#0E7490", // teal
-  "#BE185D", // rose
-  "#1D4ED8", // blue
-  "#15803D", // green
-  "#9333EA", // purple
-]
-const GE_COLOR = "#C2410C"          // burnt orange
 const DOUBLE_COUNT_BG = "#F0B400"   // USC gold for stacked-GE specials
 const DOUBLE_COUNT_FG = "#1A1A00"
 
-// Stable hash by course code — used as the *starting* palette index so a course
-// tends to keep the same color across all 3 result cards.
-function hashIndex(courseCode: string): number {
-  let h = 0
-  for (const ch of courseCode) h = (h * 31 + ch.charCodeAt(0)) | 0
-  return Math.abs(h) % COURSE_PALETTE.length
-}
-
-// Assign each course in a schedule a UNIQUE palette color. We seed from the
-// stable hash (for cross-card consistency) but linear-probe to the next free
-// color on collision, so two different courses in the same schedule never share
-// a color (e.g. EE 141 vs CSCI 170). GE / double-count blocks use their own
-// dedicated colors and are excluded here.
+// GE and double-count blocks use their own dedicated colors, so they are left out.
 function buildColorMap(schedule: Schedule): Map<string, string> {
-  const map = new Map<string, string>()
-  const used = new Set<string>()
-  for (const course of schedule.courses) {
-    if (course.entry_type === "ge" || course.is_double_count) continue
-    if (map.has(course.course)) continue
-    let idx = hashIndex(course.course)
-    for (let i = 0; i < COURSE_PALETTE.length; i++) {
-      const candidate = COURSE_PALETTE[(idx + i) % COURSE_PALETTE.length]
-      if (!used.has(candidate)) {
-        idx = (idx + i) % COURSE_PALETTE.length
-        break
-      }
-    }
-    const color = COURSE_PALETTE[idx]
-    used.add(color)
-    map.set(course.course, color)
-  }
-  return map
+  return assignCourseColors(
+    schedule.courses.filter((c) => c.entry_type !== "ge" && !c.is_double_count).map((c) => c.course),
+  )
 }
 
 function pos(t: string): number {

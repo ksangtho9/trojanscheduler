@@ -281,6 +281,112 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   color: var(--cardinal);
 }
 
+/* Selected-course chips: white two-line chip with the course's calendar color */
+.course-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 280px;
+  min-width: 0;
+  padding: 0 4px 0 0;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--border-default);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.course-chip:hover {
+  border-color: color-mix(in srgb, var(--chip-color) 40%, var(--border-default));
+}
+
+.course-chip.is-active {
+  border-color: color-mix(in srgb, var(--chip-color) 55%, transparent);
+  background: color-mix(in srgb, var(--chip-color) 5%, #fff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--chip-color) 12%, transparent);
+}
+
+.course-chip-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 4px 7px 11px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 11px 0 0 11px;
+  outline: none;
+}
+
+.course-chip-main:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--chip-color) 45%, transparent);
+}
+
+.course-chip-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chip-color);
+}
+
+.course-chip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.course-chip-code {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.course-chip-pin {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cardinal);
+}
+
+.course-chip-title {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.course-chip-remove {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  outline: none;
+}
+
+.course-chip-remove:hover,
+.course-chip-remove:focus-visible {
+  background: rgba(153, 0, 0, 0.1);
+  color: var(--cardinal);
+}
+
+/* Phones: let a chip use the row so long titles truncate later */
+@media (max-width: 640px) {
+  .course-chip { max-width: 100%; }
+}
+
 /* Unified add row */
 .form-add-row {
   display: flex;

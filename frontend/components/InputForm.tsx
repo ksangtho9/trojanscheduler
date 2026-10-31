@@ -26,6 +26,7 @@ import InfoTip from "./InfoTip"
 import Onboarding from "./Onboarding"
 import { track } from "@/lib/analytics"
 import { formatClock } from "@/lib/time"
+import { COURSE_PALETTE, GE_COLOR, assignCourseColors } from "@/lib/courseColors"
 
 // Every course lookup in this form is term-specific. Carried by context rather
 // than prop-drilled: the lookups live in leaf components several levels below
@@ -146,14 +147,36 @@ function entryFilled(e: Entry): boolean {
   return Boolean(e.code.trim() || e.category)
 }
 
-function pillLabel(e: Entry): string {
+type ChipInfo = { code: string; title: string; color: string; pinned: boolean; tooltip: string }
+
+/** What a selected-course chip shows: code, short title, calendar color, pin marker. */
+function chipInfo(e: Entry, titles: Map<string, string>, colors: Map<string, string>): ChipInfo {
+  const code = e.code.trim().toUpperCase()
+  const pinned = Boolean(e.professor.trim() || e.section_id.trim())
+  let label: string
+  let title: string
+  let color: string
   if (e.type === "ge") {
-    const picked = e.code.trim().toUpperCase().replace(" ", "-")
-    if (e.category === "GESM") return picked || "GESM"
-    if (e.category) return picked ? `GE ${e.category}: ${picked}` : `GE ${e.category}`
-    return "GE"
+    const catLabel = e.category === "GESM" ? "GESM" : `GE ${e.category}`
+    color = GE_COLOR
+    if (code) {
+      label = code
+      const t = titles.get(code) ?? ""
+      // A pinned GE A/B/... course says which requirement it fills; GESM codes already do
+      title = e.category && e.category !== "GESM" ? [catLabel, t].filter(Boolean).join(" · ") : t
+    } else {
+      label = e.category ? catLabel : "GE"
+      title = e.category === "GESM" ? "Any GE seminar"
+        : e.category ? `Any ${GE_CATEGORY_LABELS[e.category]} course` : ""
+    }
+  } else {
+    label = code || "Course"
+    title = titles.get(code) ?? ""
+    color = colors.get(code) ?? COURSE_PALETTE[0]
   }
-  return e.code.trim().toUpperCase().replace(" ", "-") || "Course"
+  const pinBits = [e.professor.trim(), e.section_id.trim() && `section ${e.section_id.trim()}`].filter(Boolean)
+  const tooltip = [label, title, pinBits.length ? `Pinned: ${pinBits.join(", ")}` : ""].filter(Boolean).join("\n")
+  return { code: label, title, color, pinned, tooltip }
 }
 
 // ── Course autocomplete ────────────────────────────────────────────────────────
@@ -1025,6 +1048,26 @@ export default function InputForm({
   // "backend" = live list. "static" = backend unreachable, using the manifest
   // shipped with this build. "failed" = neither answered.
   const [termSource, setTermSource] = useState<"backend" | "static" | "failed" | null>(null)
+  // Titles and calendar colors for the selected-course chips. Both lists are
+  // cached per term, so this shares the fetch with the search box.
+  const catalog = useCourses(termCode)
+  const geCourses = useGeCourses(termCode)
+  const courseTitles = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const list of Object.values(geCourses)) for (const c of list) map.set(c.code.toUpperCase(), c.title)
+    for (const c of catalog) map.set(c.code.toUpperCase(), c.title)
+    return map
+  }, [catalog, geCourses])
+  // Colored across both lists at once so a required and an optional course
+  // never share a color, using the same hash as the calendar grid.
+  const courseColors = useMemo(
+    () => assignCourseColors(
+      [...mustHaves, ...niceToHaves]
+        .filter((e) => e.type === "course" && e.code.trim())
+        .map((e) => e.code.trim().toUpperCase()),
+    ),
+    [mustHaves, niceToHaves],
+  )
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
@@ -1504,6 +1547,8 @@ export default function InputForm({
               removeEntry={(list, setList, id) =>
                 deleteEntryAndClearEdit(list, setList, id, setEditingMustId, editingMustId)
               }
+              titles={courseTitles}
+              colors={courseColors}
             />
           </section>
 
@@ -1533,6 +1578,8 @@ export default function InputForm({
               removeEntry={(list, setList, id) =>
                 deleteEntryAndClearEdit(list, setList, id, setEditingNiceId, editingNiceId)
               }
+              titles={courseTitles}
+              colors={courseColors}
             />
           </section>
 
@@ -1938,6 +1985,8 @@ function CourseEntryBlock({
   onCommitGE,
   updateEntry,
   removeEntry,
+  titles,
+  colors,
 }: {
   entries: Entry[]
   setEntries: Dispatch<SetStateAction<Entry[]>>
@@ -1952,6 +2001,8 @@ function CourseEntryBlock({
   onCommitGE: (category: string, geCode?: string) => void
   updateEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number, patch: Partial<Entry>) => void
   removeEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number) => void
+  titles: Map<string, string>
+  colors: Map<string, string>
 }) {
   const filled = entries.filter(entryFilled)
   const incomplete = entries.filter((e) => !entryFilled(e))
@@ -1961,30 +2012,45 @@ function CourseEntryBlock({
     <div className="space-y-1.5">
       {(filled.length > 0 || incomplete.length > 0) && (
         <div className="flex flex-wrap gap-1.5">
-          {filled.map((e) => (
-            <div
-              key={e.id}
-              className={`form-pill ${editingId === e.id ? "is-active" : ""}`}
-            >
-              <button
-                type="button"
-                className="bg-transparent border-none cursor-pointer uppercase tracking-wide"
-                style={{ color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit", outline: "none" }}
-                onClick={() => setEditingId(editingId === e.id ? null : e.id)}
+          {filled.map((e) => {
+            const info = chipInfo(e, titles, colors)
+            const active = editingId === e.id
+            return (
+              <div
+                key={e.id}
+                className={`course-chip${active ? " is-active" : ""}`}
+                style={{ "--chip-color": info.color } as CSSProperties}
+                title={info.tooltip}
               >
-                {pillLabel(e)}
-              </button>
-              <button
-                type="button"
-                className="form-pill-remove"
-                aria-label={`Remove ${pillLabel(e)}`}
-                style={{ outline: "none" }}
-                onClick={() => removeEntry(entries, setEntries, e.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  className="course-chip-main"
+                  aria-expanded={active}
+                  aria-label={`Edit ${info.code}`}
+                  onClick={() => setEditingId(active ? null : e.id)}
+                >
+                  <span className="course-chip-dot" aria-hidden="true" />
+                  <span className="course-chip-text">
+                    <span className="course-chip-code">
+                      {info.code}
+                      {info.pinned && <span className="course-chip-pin"> · pinned</span>}
+                    </span>
+                    {info.title && <span className="course-chip-title">{info.title}</span>}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="course-chip-remove"
+                  aria-label={`Remove ${info.code}`}
+                  onClick={() => removeEntry(entries, setEntries, e.id)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
           {incomplete.map((e) => (
             <span
               key={e.id}
