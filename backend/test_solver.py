@@ -19,6 +19,7 @@ from solver import (
     CourseInput,
     Constraints,
     build_schedules,
+    expand_to_pairs,
 )
 
 
@@ -402,6 +403,56 @@ def test_required_ge_still_fails_when_it_cannot_fit():
     assert result["error"]
 
 
+
+# ---------------------------------------------------------------------------
+# A course's own lab/discussion must not overlap its own lecture
+# (PHYS 152 Fall 2026: lecture Tue/Thu 2:00-3:50 was paired with a Thu 2:00 lab)
+# ---------------------------------------------------------------------------
+
+def _lab(sid, days, start, end, stype="Lab"):
+    return LinkedSection(section_id=sid, section_type=stype, days=days,
+                         start_time=start, end_time=end, seats_available=5, total_seats=20)
+
+
+def test_linked_section_overlapping_its_own_lecture_is_dropped():
+    lecture = make_section("PHYS 152", "50404", ["Tue", "Thu"], "14:00", "15:50", linked_sections=[
+        _lab("50415", ["Thu"], "14:00", "16:50"),   # clashes with the Thu lecture
+        _lab("50411", ["Fri"], "11:00", "13:50"),   # fine
+    ])
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    for planning in (False, True):
+        pairs, _, bundles = expand_to_pairs([lecture], cons, planning_mode=planning)
+        labs = {p.linked_sections[0].section_id for p in pairs}
+        assert labs == {"50411"}, (planning, labs)
+        offered = {ls.section_id for ls in bundles[0].options_by_type["lab"]}
+        assert offered == {"50411"}, f"the lab picker must not offer the clashing lab: {offered}"
+
+
+def test_linked_sections_overlapping_each_other_are_not_combined():
+    lecture = make_section("PHYS 152", "50400", ["Wed", "Fri"], "12:00", "13:50", linked_sections=[
+        _lab("50403", ["Thu"], "17:00", "18:20", stype="Discussion"),
+        _lab("50420", ["Thu"], "17:00", "19:50"),   # clashes with the discussion
+        _lab("50406", ["Tue"], "08:00", "10:50"),
+    ])
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    pairs, _, _ = expand_to_pairs([lecture], cons, planning_mode=True)
+    combos = {tuple(sorted(ls.section_id for ls in p.linked_sections)) for p in pairs}
+    assert combos == {("50403", "50406")}, combos
+
+
+def test_lecture_whose_only_lab_clashes_is_unschedulable():
+    lecture = make_section("PHYS 152", "50404", ["Tue", "Thu"], "14:00", "15:50", linked_sections=[
+        _lab("50415", ["Thu"], "14:00", "16:50"),
+    ])
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    pairs, _, _ = expand_to_pairs([lecture], cons, planning_mode=True)
+    assert pairs == [], pairs
+    result = call_solver({"PHYS 152": [lecture]}, cons, planning_mode=True)
+    for sched in result["schedules"]:
+        for c in sched["courses"]:
+            assert all(ls["section_id"] != "50415" for ls in c.get("linked_sections", []) if ls), sched
+
+
 TESTS = [
     test_planning_mode_returns_schedules_despite_tight_time_window,
     test_planning_mode_returns_schedules_despite_days_off,
@@ -414,6 +465,9 @@ TESTS = [
     test_planning_mode_ignores_seat_count_in_score,
     test_optional_ge_slots_never_block_must_have_schedules,
     test_required_ge_still_fails_when_it_cannot_fit,
+    test_linked_section_overlapping_its_own_lecture_is_dropped,
+    test_linked_sections_overlapping_each_other_are_not_combined,
+    test_lecture_whose_only_lab_clashes_is_unschedulable,
 ]
 
 

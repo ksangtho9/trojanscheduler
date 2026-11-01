@@ -405,6 +405,27 @@ def filter_and_pin_sections(
     return result, None
 
 
+def _linked_clashes_with_lecture(lecture: Section, linked: LinkedSection) -> bool:
+    """True if a linked section meets on a lecture day at an overlapping time."""
+    return _blocks_conflict(
+        lecture.days, lecture.start_time, lecture.end_time,
+        linked.days, linked.start_time, linked.end_time,
+        buffer_mins=0,
+    )
+
+
+def _linked_combo_clashes(combo) -> bool:
+    """True if any two linked sections in one lecture's bundle overlap."""
+    items = list(combo)
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            a, b = items[i], items[j]
+            if _blocks_conflict(a.days, a.start_time, a.end_time,
+                                b.days, b.start_time, b.end_time, buffer_mins=0):
+                return True
+    return False
+
+
 def expand_to_pairs(
     sections: list[Section],
     constraints: Constraints,
@@ -459,10 +480,17 @@ def expand_to_pairs(
         if pinned_lecture_id and section.section_id != pinned_lecture_id:
             continue
 
-        # Group by normalized type (e.g. "Discussion" → "discussion")
+        # Group by normalized type (e.g. "Discussion" → "discussion").
+        # USC links labs/discussions to the whole course, not to one lecture
+        # (PHYS 152 lists all 14 labs under each of its 3 lectures), so a
+        # linked section can meet at the same time as this lecture. Those can
+        # never be taken together, so drop them here, in planning mode too.
         by_type: dict[str, list[LinkedSection]] = {}
         for ls in section.linked_sections:
-            by_type.setdefault(ls.section_type.lower(), []).append(ls)
+            by_type.setdefault(ls.section_type.lower(), [])
+            if _linked_clashes_with_lecture(section, ls):
+                continue
+            by_type[ls.section_type.lower()].append(ls)
 
         # Filter each type by time window + days off (skipped in planning mode)
         if planning_mode:
@@ -515,6 +543,10 @@ def expand_to_pairs(
         # Cartesian product across all type groups → one SectionPair per combo
         type_groups = list(eligible_by_type.values())
         for combo in _cart_product(*type_groups):
+            # Skip combos whose own linked sections overlap (a lab at the
+            # same time as the discussion)
+            if _linked_combo_clashes(combo):
+                continue
             pairs.append(SectionPair(lecture=section, linked_sections=list(combo)))
 
     # Prompt only for types that actually offer a choice:
