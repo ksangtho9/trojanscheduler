@@ -20,6 +20,7 @@ from solver import (
     Constraints,
     build_schedules,
     expand_to_pairs,
+    resolve_must_haves,
 )
 
 
@@ -453,6 +454,67 @@ def test_lecture_whose_only_lab_clashes_is_unschedulable():
             assert all(ls["section_id"] != "50415" for ls in c.get("linked_sections", []) if ls), sched
 
 
+
+# ---------------------------------------------------------------------------
+# The lab/discussion prompt must only offer choices that fit the other courses
+# (Fall 2026: prompt offered Peroomian's PHYS 152, whose lecture clashes with
+# EE 141's 11am discussion, so every pick ended in "unavoidable conflicts")
+# ---------------------------------------------------------------------------
+
+def _prompt_fixture(other_days, other_start, other_end):
+    labs = [_lab("L-fri8", ["Fri"], "08:00", "10:50"),
+            _lab("L-fri11", ["Fri"], "11:00", "13:50"),
+            _lab("L-wed8", ["Wed"], "08:00", "10:50")]
+    phys = [
+        make_section("PHYS 152", "top", ["Tue", "Thu"], "10:00", "11:50", rmp_score=4.5, linked_sections=labs),
+        make_section("PHYS 152", "low", ["Tue", "Thu"], "14:00", "15:50", rmp_score=1.8, linked_sections=labs),
+    ]
+    other = [make_section("EE 141", "e1", other_days, other_start, other_end)]
+    return {"PHYS 152": phys, "EE 141": other}
+
+
+def _resolve(sections, prefs=None):
+    inputs = [CourseInput(input_type="course", code="EE 141"),
+              CourseInput(input_type="course", code="PHYS 152", preferred_linked_section_ids=prefs)]
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    return resolve_must_haves(inputs, sections, cons, planning_mode=True)
+
+
+def test_prompt_skips_top_rated_lecturer_that_cannot_fit():
+    res = _resolve(_prompt_fixture(["Tue", "Thu"], "11:00", "11:50"))   # clashes with "top"
+    assert res.needs_linked_section_prompt == "PHYS 152", (res.errors, res.needs_linked_section_prompt)
+    bundles = res.linked_section_options["PHYS 152"]
+    assert [b.lecture_section_id for b in bundles] == ["low"], [b.lecture_section_id for b in bundles]
+
+
+def test_prompt_still_prefers_top_rated_lecturer_when_it_fits():
+    res = _resolve(_prompt_fixture(["Mon"], "09:00", "09:50"))
+    bundles = res.linked_section_options["PHYS 152"]
+    assert [b.lecture_section_id for b in bundles] == ["top"], [b.lecture_section_id for b in bundles]
+
+
+def test_prompt_drops_lab_times_that_clash_with_other_courses():
+    res = _resolve(_prompt_fixture(["Fri"], "11:00", "11:50"))           # clashes with the Fri 11 lab
+    labs = {ls.section_id for b in res.linked_section_options["PHYS 152"] for ls in b.options_by_type["lab"]}
+    assert labs == {"L-fri8", "L-wed8"}, labs
+
+
+def test_every_prompted_choice_leads_to_a_schedule():
+    sections = _prompt_fixture(["Tue", "Thu"], "11:00", "11:50")
+    res = _resolve(sections)
+    for b in res.linked_section_options["PHYS 152"]:
+        for ls in b.options_by_type["lab"]:
+            picked = _resolve(sections, {"lecture_section_id": b.lecture_section_id, "lab": ls.section_id})
+            assert not picked.errors and picked.combinations, (ls.section_id, picked.errors)
+
+
+def test_no_prompt_when_only_one_lab_time_fits():
+    sections = _prompt_fixture(["Wed", "Fri"], "08:00", "10:50")         # only the Fri 11 lab is left
+    res = _resolve(sections)
+    assert res.needs_linked_section_prompt is None, res.linked_section_options
+    assert res.combinations and not res.errors, res.errors
+
+
 TESTS = [
     test_planning_mode_returns_schedules_despite_tight_time_window,
     test_planning_mode_returns_schedules_despite_days_off,
@@ -468,6 +530,11 @@ TESTS = [
     test_linked_section_overlapping_its_own_lecture_is_dropped,
     test_linked_sections_overlapping_each_other_are_not_combined,
     test_lecture_whose_only_lab_clashes_is_unschedulable,
+    test_prompt_skips_top_rated_lecturer_that_cannot_fit,
+    test_prompt_still_prefers_top_rated_lecturer_when_it_fits,
+    test_prompt_drops_lab_times_that_clash_with_other_courses,
+    test_every_prompted_choice_leads_to_a_schedule,
+    test_no_prompt_when_only_one_lab_time_fits,
 ]
 
 

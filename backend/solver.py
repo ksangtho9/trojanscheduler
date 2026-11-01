@@ -809,6 +809,75 @@ def backtrack(
     return result
 
 
+def _has_solution(
+    groups: list[list[SectionPair]], gi: int, only: list[SectionPair], buffer_mins: int,
+) -> bool:
+    """True if the must-haves can all be placed with course `gi` limited to `only`."""
+    if not only:
+        return False
+    trial = list(groups)
+    trial[gi] = only
+    return bool(backtrack(trial, buffer_mins, max_combinations=1).combinations)
+
+
+def _feasible_prompt(
+    groups: list[list[SectionPair]],
+    gi: int,
+    prompt_type: str,
+    options: list[BundleOption],
+    filtered: list[Section],
+    prefs: Optional[dict],
+    buffer_mins: int,
+) -> Optional[list[BundleOption]]:
+    """
+    The bundle(s) to show in a linked-section prompt, limited to choices that
+    can actually be scheduled with the other must-haves.
+
+    Without this, the prompt offered the top-RMP lecturer even when their
+    lecture clashed with another course (PHYS 152 Peroomian vs EE 141's
+    11am discussion), and every pick led to "unavoidable time conflicts".
+
+    Returns None when there is nothing worth asking: no lecturer fits (the
+    backtracker will report the conflict) or only one time of this type fits.
+    """
+    pairs = groups[gi]
+    fitting = [
+        b for b in options
+        if _has_solution(groups, gi, [p for p in pairs if p.lecture.section_id == b.lecture_section_id], buffer_mins)
+    ]
+    if not fitting:
+        return None
+
+    already_pinned = prefs is not None and prefs.get("lecture_section_id")
+    if not already_pinned and len(fitting) > 1:
+        rmp_by_id = {s.section_id: s.rmp_score for s in filtered}
+        fitting = [max(fitting, key=lambda b: rmp_by_id.get(b.lecture_section_id, 0.0))]
+
+    narrowed: list[BundleOption] = []
+    for b in fitting:
+        lecture_pairs = [p for p in pairs if p.lecture.section_id == b.lecture_section_id]
+        keep = [
+            ls for ls in b.options_by_type.get(prompt_type, [])
+            if _has_solution(groups, gi, [
+                p for p in lecture_pairs
+                if any(x.section_id == ls.section_id and x.section_type.lower() == prompt_type
+                       for x in p.linked_sections)
+            ], buffer_mins)
+        ]
+        if keep:
+            narrowed.append(BundleOption(
+                lecture_section_id=b.lecture_section_id,
+                professor=b.professor,
+                lecture_days=b.lecture_days,
+                lecture_start_time=b.lecture_start_time,
+                lecture_end_time=b.lecture_end_time,
+                options_by_type={**b.options_by_type, prompt_type: keep},
+            ))
+    if len({ls.section_id for b in narrowed for ls in b.options_by_type[prompt_type]}) < 2:
+        return None
+    return narrowed
+
+
 def resolve_must_haves(
     must_have_inputs: list[CourseInput],
     all_sections: dict[str, list[Section]],   # course_code -> sections from scraper
@@ -840,6 +909,7 @@ def resolve_must_haves(
     buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
     result = SolverResult()
     groups: list[list[SectionPair]] = []
+    pending_prompts: list[tuple] = []
 
     for course_input in must_have_inputs:
         course_code = course_input.code or f"GE {course_input.category}"
@@ -866,36 +936,38 @@ def resolve_must_haves(
             result.errors.append(msg)
             continue
 
+        groups.append(pairs)
+
         # Prompt strategy (one linked type at a time, walked by priority):
-        # - No prior preferences (None): prompt and narrow to top-RMP bundle so
-        #   the user sees only one lecturer's options. Their first pick
-        #   implicitly chooses that lecturer.
+        # - No prior preferences (None): prompt and narrow to the top-RMP
+        #   bundle so the user sees only one lecturer's options. Their first
+        #   pick implicitly chooses that lecturer.
         # - Empty preferences ({}): "no preference" signal from the user —
         #   never prompt again, let the backtracker explore everything.
         # - Non-empty preferences: honor the pins, and re-prompt for any
         #   remaining promptable type the user hasn't decided on.
+        # The prompt itself is decided after every course is expanded (below),
+        # because whether a lecturer or lab time can work depends on the
+        # other courses.
         if prompt_type is not None:
             prefs = course_input.preferred_linked_section_ids
-            no_pref_signal = prefs is not None and len(prefs) == 0
-            if not no_pref_signal:
-                already_pinned = prefs is not None and prefs.get("lecture_section_id")
-                if not already_pinned and len(options) > 1:
-                    section_by_id = {s.section_id: s for s in filtered}
+            if not (prefs is not None and len(prefs) == 0):
+                pending_prompts.append((course_code, len(groups) - 1, prompt_type, options, filtered, prefs))
 
-                    def _bundle_rmp(b: BundleOption) -> float:
-                        sec = section_by_id.get(b.lecture_section_id)
-                        return sec.rmp_score if sec else 0.0
+    if result.errors:
+        return result
 
-                    options = [max(options, key=_bundle_rmp)]
-                result.needs_linked_section_prompt = course_code
-                result.prompt_type = prompt_type
-                result.linked_section_options[course_code] = options
-                continue
+    for course_code, gi, prompt_type, options, filtered, prefs in pending_prompts:
+        prompt = _feasible_prompt(groups, gi, prompt_type, options, filtered, prefs, buffer_mins)
+        if prompt is None:
+            # Nothing to choose between (no lecturer fits, or only one time
+            # does), so let the backtracker decide or report the conflict.
+            continue
+        result.needs_linked_section_prompt = course_code
+        result.prompt_type = prompt_type
+        result.linked_section_options[course_code] = prompt
 
-        groups.append(pairs)
-
-    # If a prompt is needed or any hard errors, return before backtracking
-    if result.needs_linked_section_prompt or result.errors:
+    if result.needs_linked_section_prompt:
         return result
 
     # Run backtracking
