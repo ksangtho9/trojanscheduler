@@ -21,6 +21,7 @@ from solver import (
     build_schedules,
     expand_to_pairs,
     resolve_must_haves,
+    filter_and_pin_sections,
 )
 
 
@@ -530,6 +531,65 @@ def test_over_unit_cap_fails_before_prompting():
     assert res.errors and "8 units" in res.errors[0] and "6-unit max" in res.errors[0], res.errors
 
 
+
+# ---------------------------------------------------------------------------
+# In-person sections with no meeting time must not beat real lectures
+# (Spring 2027 CORE 104: picked the TBA Maymester-in-Hong-Kong section 63582,
+# so the calendar showed only the lab)
+# ---------------------------------------------------------------------------
+
+def _core_fixture():
+    lab = _lab("63534", ["Mon"], "17:00", "19:50")
+    return [
+        make_section("CORE 104", "63536", ["Mon", "Wed"], "15:30", "16:50", linked_sections=[lab]),
+        make_section("CORE 104", "63582", [], "TBA", "TBA", professor="Michael Petitti", rmp_score=5.0, linked_sections=[lab]),
+    ]
+
+
+def test_tba_in_person_section_is_not_picked_over_a_timed_one():
+    sections = {"CORE 104": _core_fixture(),
+                "MATH 245": [make_section("MATH 245", "m1", ["Mon", "Wed", "Fri"], "11:00", "11:50")]}
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    for planning in (False, True):
+        result = call_solver(sections, cons, planning_mode=planning)
+        assert result["schedules"], result["error"]
+        for sched in result["schedules"]:
+            core = next(c for c in sched["courses"] if c["course"] == "CORE 104")
+            assert core["section_id"] == "63536", (planning, core["section_id"])
+
+
+def test_tba_lab_is_not_picked_over_a_timed_lab():
+    lecture = make_section("CORE 104", "63536", ["Mon", "Wed"], "15:30", "16:50", linked_sections=[
+        _lab("63534", ["Mon"], "17:00", "19:50"),
+        _lab("63535", [], "TBA", "TBA"),
+    ])
+    only_tba = make_section("CORE 105", "x1", ["Tue"], "10:00", "11:50", linked_sections=[_lab("t1", [], "TBA", "TBA")])
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    pairs, _, _ = expand_to_pairs([lecture], cons, planning_mode=True)
+    assert {p.linked_sections[0].section_id for p in pairs} == {"63534"}
+    pairs, _, _ = expand_to_pairs([only_tba], cons, planning_mode=True)
+    assert {p.linked_sections[0].section_id for p in pairs} == {"t1"}, "a TBA-only lab type must stay schedulable"
+
+
+def test_pinned_tba_section_is_still_allowed():
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    got, err = filter_and_pin_sections(_core_fixture(), CourseInput(input_type="course", code="CORE 104", section_id="63582"), cons)
+    assert err is None and [s.section_id for s in got] == ["63582"], (err, got)
+    got, err = filter_and_pin_sections(_core_fixture(), CourseInput(input_type="course", code="CORE 104", professor="Petitti"), cons, planning_mode=True)
+    assert err is None and [s.section_id for s in got] == ["63582"], (err, got)
+
+
+def test_online_and_tba_only_courses_keep_their_sections():
+    online = make_section("WRIT 150", "w-online", [], "TBA", "TBA", modality="online")
+    timed = make_section("WRIT 150", "w-timed", ["Tue"], "10:00", "11:50")
+    tba_only = make_section("ENGR 499", "r1", [], "TBA", "TBA")
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    got, _ = filter_and_pin_sections([online, timed], CourseInput(input_type="course", code="WRIT 150"), cons, planning_mode=True)
+    assert {s.section_id for s in got} == {"w-online", "w-timed"}, got
+    got, _ = filter_and_pin_sections([tba_only], CourseInput(input_type="course", code="ENGR 499"), cons, planning_mode=True)
+    assert [s.section_id for s in got] == ["r1"], got
+
+
 TESTS = [
     test_planning_mode_returns_schedules_despite_tight_time_window,
     test_planning_mode_returns_schedules_despite_days_off,
@@ -551,6 +611,10 @@ TESTS = [
     test_every_prompted_choice_leads_to_a_schedule,
     test_no_prompt_when_only_one_lab_time_fits,
     test_over_unit_cap_fails_before_prompting,
+    test_tba_in_person_section_is_not_picked_over_a_timed_one,
+    test_tba_lab_is_not_picked_over_a_timed_lab,
+    test_pinned_tba_section_is_still_allowed,
+    test_online_and_tba_only_courses_keep_their_sections,
 ]
 
 

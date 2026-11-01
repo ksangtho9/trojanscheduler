@@ -48,6 +48,11 @@ function nameLastFirst(prof: string): string {
 }
 
 // Capitalize "discussion" -> "Discussion", "lab" -> "Lab".
+/** True when a section has days and a clock time, i.e. it can be drawn. */
+function isTimed(days: string[], start: string, end: string): boolean {
+  return days.length > 0 && clockMinutes(start) !== null && clockMinutes(end) !== null
+}
+
 function titleCase(s: string): string {
   if (!s) return ""
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
@@ -92,6 +97,14 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
     if (rootRef.current) ro.observe(rootRef.current)
     return () => ro.disconnect()
   }, [dayGap])
+
+  const untimed: string[] = []
+  for (const course of schedule.courses) {
+    if (!isTimed(course.days, course.start_time, course.end_time)) untimed.push(course.course)
+    for (const ls of course.linked_sections) {
+      if (ls && !isTimed(ls.days, ls.start_time, ls.end_time)) untimed.push(`${course.course} ${titleCase(ls.section_type)}`)
+    }
+  }
 
   // Every hour from 8am through 8pm, in both modes.
   const hours: number[] = []
@@ -242,6 +255,24 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
           })}
         </div>
       </div>
+
+      {/* Sections with no fixed meeting time can't be drawn; say so instead of
+          letting them vanish (a TBA lecture used to show as just its lab). */}
+      {untimed.length > 0 && (
+        <div
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid var(--border-subtle)",
+            padding: isLarge ? "8px 12px" : "5px 8px",
+            fontSize: isLarge ? 12 : 10,
+            lineHeight: 1.35,
+            color: "var(--text-tertiary)",
+          }}
+        >
+          <span style={{ fontWeight: 600, color: "var(--text-secondary)" }}>No set time, not shown: </span>
+          {untimed.join(" · ")}
+        </div>
+      )}
     </div>
   )
 }

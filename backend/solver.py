@@ -313,6 +313,33 @@ def _no_day_off_conflict(days: list[str], constraints: Constraints) -> bool:
     return not any(d in constraints.days_off for d in days)
 
 
+def _has_meeting_time(section: Section) -> bool:
+    return bool(section.days) and _to_minutes(section.start_time) >= 0 and _to_minutes(section.end_time) >= 0
+
+
+def _linked_has_meeting_time(ls: LinkedSection) -> bool:
+    return bool(ls.days) and _to_minutes(ls.start_time) >= 0 and _to_minutes(ls.end_time) >= 0
+
+
+def _prefer_timed_sections(sections: list[Section]) -> list[Section]:
+    """
+    Per course: if it has sections with a real meeting time, drop its
+    in-person sections that have none.
+
+    A TBA in-person section adds no days, no gaps and no conflicts, so it
+    out-scored every real lecture and then drew nothing on the calendar.
+    Spring 2027 CORE 104 section 63582 is a Maymester course taught in Hong
+    Kong; schedules picked it over MW 3:30 and showed only the lab.
+    Online sections are kept: asynchronous online classes have no time by
+    design. Courses with only TBA sections are kept as they are.
+    """
+    timed_courses = {s.course for s in sections if _has_meeting_time(s)}
+    return [
+        s for s in sections
+        if s.course not in timed_courses or _has_meeting_time(s) or s.modality == "online"
+    ]
+
+
 def filter_and_pin_sections(
     sections: list[Section],
     course_input: CourseInput,
@@ -332,6 +359,8 @@ def filter_and_pin_sections(
       4. Apply days-off filter
       5. Pin to professor (hard error if none found after filtering)
       6. Pin to section_id (hard error if not found)
+      6b. Drop in-person sections with no meeting time when the same course
+          has timed ones (see _prefer_timed_sections)
       7. Cap to top-N by RMP score
     """
     label = course_input.code or course_input.ge_code or "this course"
@@ -397,6 +426,11 @@ def filter_and_pin_sections(
                 f"is not available (full or doesn't exist)."
             )
         result = pinned
+
+    # 6b. Prefer sections with a real meeting time. Runs after the pins so a
+    # student who pins a TBA section or its professor still gets it.
+    if not course_input.section_id:
+        result = _prefer_timed_sections(result)
 
     # 7. Cap to top-N by RMP
     result.sort(key=lambda s: s.rmp_score, reverse=True)
@@ -491,6 +525,14 @@ def expand_to_pairs(
             if _linked_clashes_with_lecture(section, ls):
                 continue
             by_type[ls.section_type.lower()].append(ls)
+        # Like lectures (_prefer_timed_sections): a TBA lab adds no days or
+        # conflicts, so it beat real lab times and left nothing on the
+        # calendar (CORE 104 lab 63535 vs Mon 5pm). Keep TBA only if that is
+        # all this type offers.
+        for stype, group in by_type.items():
+            timed = [ls for ls in group if _linked_has_meeting_time(ls)]
+            if timed:
+                by_type[stype] = timed
 
         # Filter each type by time window + days off (skipped in planning mode)
         if planning_mode:
