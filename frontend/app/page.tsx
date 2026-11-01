@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { msSince, track } from "@/lib/analytics"
 import InputForm from "@/components/InputForm"
 import LeftPanel from "@/components/LeftPanel"
-import LoadingScreen from "@/components/LoadingScreen"
+import LoadingScreen, { randomLoadingAccents } from "@/components/LoadingScreen"
 import ScheduleImageCard from "@/components/ScheduleImageCard"
 import ScheduleDetail from "@/components/ScheduleDetail"
 import {
@@ -48,9 +48,24 @@ export default function Home() {
   const [pendingPayload, setPendingPayload] = useState<GenerateRequest | null>(null)
   const [planningMode, setPlanningMode] = useState(true)
   const [autoPickMode, setAutoPickMode] = useState(false)
+  // Bumped by Start over to give the student a fresh form
+  const [formKey, setFormKey] = useState(0)
 
-  const callGenerate = async (payload: GenerateRequest, autoPickDepth = 0) => {
+  // One build can take several round trips (each lab/discussion pick is a new
+  // request). The loading screen resumes from where the last round paused so
+  // the progress bar never resets mid-build.
+  const loadingPausedAt = useRef(0)
+  const [loadingRun, setLoadingRun] = useState({ offsetMs: 0, accents: [] as ReturnType<typeof randomLoadingAccents> })
+  const handleLoadingPause = useCallback((ms: number) => { loadingPausedAt.current = ms }, [])
+
+  const callGenerate = async (payload: GenerateRequest, autoPickDepth = 0, resume = false) => {
     setError(null)
+    if (resume) {
+      setLoadingRun((r) => ({ ...r, offsetMs: loadingPausedAt.current }))
+    } else {
+      loadingPausedAt.current = 0
+      setLoadingRun({ offsetMs: 0, accents: randomLoadingAccents() })
+    }
     setStage("loading")
     const loadingStart = Date.now()
     const controller = new AbortController()
@@ -114,7 +129,8 @@ export default function Home() {
               ...payload,
               linked_section_preferences: { ...existing, [course]: {} },
             },
-            autoPickDepth + 1
+            autoPickDepth + 1,
+            true,
           )
           return
         }
@@ -207,7 +223,7 @@ export default function Home() {
       linked_section_preferences: merged,
     }
     setDiscussionPromptCourse(null)
-    callGenerate(updated)
+    callGenerate(updated, 0, true)
   }
 
   const handleSelect = (schedule: Schedule) => {
@@ -234,6 +250,7 @@ export default function Home() {
   }
 
   const handleStartOver = () => {
+    setFormKey((k) => k + 1)
     setStage("form")
     setResponse(null)
     setSelectedSchedule(null)
@@ -249,9 +266,13 @@ export default function Home() {
   // The form stage uses InputForm's own shell (LeftPanel + content area).
   // For loading/results/detail we reproduce the same shell here so the layout
   // stays identical across the whole app.
-  if (stage === "form") {
-    return (
+  // The form stays mounted (just hidden) while loading and showing results,
+  // so an error or a lab/discussion prompt returns to the student's courses,
+  // term, and settings instead of a blank form. Start over remounts it.
+  const form = (
+    <div hidden={stage !== "form"}>
       <InputForm
+        key={formKey}
         onSubmit={handleSubmit}
         error={error}
         discussionPromptCourse={discussionPromptCourse}
@@ -259,10 +280,14 @@ export default function Home() {
         promptType={promptType}
         onDiscussionPreference={handleDiscussionPreference}
       />
-    )
-  }
+    </div>
+  )
+
+  if (stage === "form") return form
 
   return (
+    <>
+    {form}
     <div style={{ display: "flex", minHeight: "100vh" }}>
       <LeftPanel currentStep={currentStep} onStartOver={stage === "results" || stage === "detail" ? handleStartOver : undefined} termLabel={response?.term_label} />
       <div
@@ -273,7 +298,9 @@ export default function Home() {
           backgroundColor: "var(--bg-page)",
         }}
       >
-        {stage === "loading" && <LoadingScreen />}
+        {stage === "loading" && (
+          <LoadingScreen offsetMs={loadingRun.offsetMs} accents={loadingRun.accents} onPause={handleLoadingPause} />
+        )}
 
         {(stage === "results" || stage === "detail") && response && (
           <div className="app-results-inner" style={{ maxWidth: 1280, margin: "0 auto", paddingTop: "calc(var(--topbar-height) + 56px)", paddingRight: 64, paddingBottom: 96, paddingLeft: 64 }}>
@@ -354,5 +381,6 @@ export default function Home() {
         )}
       </div>
     </div>
+    </>
   )
 }

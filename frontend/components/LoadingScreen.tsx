@@ -40,50 +40,71 @@ const BLOCKS: Block[] = [
   { col: 3, row: 7, rowSpan: 2, accent: "gold",     delay: 2500 },
 ]
 
-export default function LoadingScreen() {
-  const [activeStep, setActiveStep] = useState(0)
-  const [progress, setProgress] = useState(0)
+type Accent = Block["accent"]
 
-  // Randomize each block's accent once per mount so every load is unique.
-  const [blocks] = useState(() =>
-    BLOCKS.map((b) => ({
-      ...b,
-      accent: (Math.random() < GOLD_PROBABILITY ? "gold" : "cardinal") as Block["accent"],
-    }))
-  )
+/** A fresh random accent per block. Called once per build so pauses keep the colors. */
+export function randomLoadingAccents(): Accent[] {
+  return BLOCKS.map(() => (Math.random() < GOLD_PROBABILITY ? "gold" : "cardinal"))
+}
+
+/** Progress % at a point on the scripted timeline. */
+function progressAt(elapsed: number): number {
+  const last = STEP_TIMES.length - 1
+  if (elapsed >= STEP_TIMES[last]) {
+    // After last step: creep from 87 → 99 over ~2s
+    return Math.min(99, STEP_PCTS[last] + ((elapsed - STEP_TIMES[last]) / 2000) * 12)
+  }
+  // Interpolate between current and next step target
+  let seg = 0
+  for (let i = 0; i < last; i++) {
+    if (elapsed >= STEP_TIMES[i] && elapsed < STEP_TIMES[i + 1]) {
+      seg = i
+      break
+    }
+  }
+  const t = (elapsed - STEP_TIMES[seg]) / (STEP_TIMES[seg + 1] - STEP_TIMES[seg])
+  return STEP_PCTS[seg] + t * (STEP_PCTS[seg + 1] - STEP_PCTS[seg])
+}
+
+const stepAt = (elapsed: number) => STEPS.reduce((acc, s, i) => (s.delay <= elapsed ? i : acc), 0)
+
+/**
+ * offsetMs resumes the scripted timeline instead of starting at 0. A build
+ * that stops to ask for a lab/discussion time unmounts this screen; onPause
+ * reports how far it got so the next round picks up there and the bar never
+ * jumps backward.
+ */
+export default function LoadingScreen({
+  offsetMs = 0,
+  accents,
+  onPause,
+}: {
+  offsetMs?: number
+  accents?: Accent[]
+  onPause?: (elapsedMs: number) => void
+} = {}) {
+  // Read once: later prop changes (auto-pick rounds) must not restart the clock
+  const [startOffset] = useState(offsetMs)
+  const [activeStep, setActiveStep] = useState(() => stepAt(startOffset))
+  const [progress, setProgress] = useState(() => progressAt(startOffset))
+
+  const [blocks] = useState(() => {
+    const picked = accents ?? randomLoadingAccents()
+    return BLOCKS.map((b, i) => ({ ...b, accent: picked[i] ?? b.accent }))
+  })
 
   useEffect(() => {
-    const timers = STEPS.map((s, i) =>
-      setTimeout(() => setActiveStep(i), s.delay)
+    const timers = STEPS.filter((s) => s.delay > startOffset).map((s) =>
+      setTimeout(() => setActiveStep(STEPS.indexOf(s)), s.delay - startOffset)
     )
-    const start = Date.now()
-    const tick = setInterval(() => {
-      const elapsed = Date.now() - start
-      let pct: number
-
-      if (elapsed >= STEP_TIMES[STEP_TIMES.length - 1]) {
-        // After last step: creep from 87 → 99 over ~2s
-        pct = Math.min(99, 87 + ((elapsed - 4000) / 2000) * 12)
-      } else {
-        // Interpolate between current and next step target
-        let seg = 0
-        for (let i = 0; i < STEP_TIMES.length - 1; i++) {
-          if (elapsed >= STEP_TIMES[i] && elapsed < STEP_TIMES[i + 1]) {
-            seg = i
-            break
-          }
-        }
-        const t = (elapsed - STEP_TIMES[seg]) / (STEP_TIMES[seg + 1] - STEP_TIMES[seg])
-        pct = STEP_PCTS[seg] + t * (STEP_PCTS[seg + 1] - STEP_PCTS[seg])
-      }
-
-      setProgress(pct)
-    }, 50)
+    const start = Date.now() - startOffset
+    const tick = setInterval(() => setProgress(progressAt(Date.now() - start)), 50)
     return () => {
       timers.forEach(clearTimeout)
       clearInterval(tick)
+      onPause?.(Date.now() - start)
     }
-  }, [])
+  }, [startOffset, onPause])
 
   return (
     <div
@@ -162,7 +183,7 @@ export default function LoadingScreen() {
                   background:
                     b.accent === "gold" ? "var(--gold)" : "var(--cardinal)",
                   borderRadius: 3,
-                  animationDelay: `${b.delay}ms`,
+                  animationDelay: `${b.delay - startOffset}ms`, // negative = already shown
                 }}
               />
             ))}

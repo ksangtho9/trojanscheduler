@@ -957,6 +957,18 @@ def resolve_must_haves(
     if result.errors:
         return result
 
+    # Units are checked only after a schedule is built, so an over-cap course
+    # list used to walk the user through every lab/discussion prompt and then
+    # fail with a misleading "GE requirements" error. Catch it up front.
+    min_units = sum(min(p.lecture.units for p in g) for g in groups)
+    if min_units > constraints.max_units:
+        units = int(min_units) if float(min_units).is_integer() else min_units
+        result.errors.append(
+            f"Your required courses add up to {units} units, more than your "
+            f"{constraints.max_units}-unit max. Raise Max units or move a course to Optional."
+        )
+        return result
+
     for course_code, gi, prompt_type, options, filtered, prefs in pending_prompts:
         prompt = _feasible_prompt(groups, gi, prompt_type, options, filtered, prefs, buffer_mins)
         if prompt is None:
@@ -2010,6 +2022,9 @@ def build_schedules(
             "error": (
                 "No valid schedule could be built with your GE requirements. "
                 "Try broader GE categories or relax your time constraints."
+                if ge_inputs else
+                f"No schedule fits within your {constraints.max_units}-unit max. "
+                "Raise Max units or move a course to Optional."
             ),
             "needs_linked_section_prompt": None,
             "linked_section_options": {},

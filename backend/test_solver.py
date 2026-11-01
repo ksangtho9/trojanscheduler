@@ -515,6 +515,21 @@ def test_no_prompt_when_only_one_lab_time_fits():
     assert res.combinations and not res.errors, res.errors
 
 
+
+# ---------------------------------------------------------------------------
+# Over the unit cap: say so before any lab/discussion prompt
+# ---------------------------------------------------------------------------
+
+def test_over_unit_cap_fails_before_prompting():
+    sections = _prompt_fixture(["Mon"], "09:00", "09:50")   # 4 + 4 units, and PHYS would prompt
+    inputs = [CourseInput(input_type="course", code="EE 141"),
+              CourseInput(input_type="course", code="PHYS 152")]
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00", max_units=6)
+    res = resolve_must_haves(inputs, sections, cons, planning_mode=True)
+    assert res.needs_linked_section_prompt is None, "must not ask for a lab time first"
+    assert res.errors and "8 units" in res.errors[0] and "6-unit max" in res.errors[0], res.errors
+
+
 TESTS = [
     test_planning_mode_returns_schedules_despite_tight_time_window,
     test_planning_mode_returns_schedules_despite_days_off,
@@ -535,6 +550,7 @@ TESTS = [
     test_prompt_drops_lab_times_that_clash_with_other_courses,
     test_every_prompted_choice_leads_to_a_schedule,
     test_no_prompt_when_only_one_lab_time_fits,
+    test_over_unit_cap_fails_before_prompting,
 ]
 
 
