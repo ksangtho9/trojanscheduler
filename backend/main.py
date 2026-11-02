@@ -415,6 +415,7 @@ async def generate(req: GenerateRequest):
                 seats_available=s["seats_available"],
                 total_seats=s.get("total_seats", 0),
                 ge_categories=s.get("ge_categories", []),
+                enrollment_limited=s.get("enrollment_limited", False),
                 topic=s.get("topic"),
                 linked_sections=linked,
             ))

@@ -74,6 +74,10 @@ class Section:
     ge_categories: list[str]    # e.g. ["C", "D"] — empty if not a GE course
     topic: Optional[str] = None  # per-section topic (GESM "Women in Hip Hop"); None for most courses
 
+    # USC limits this course by class level, major or school. Set by ge_finder
+    # on GE candidates; auto-picked GE slots skip these.
+    enrollment_limited: bool = False
+
     # RMP data — populated by rmp.py before solver runs
     rmp_score: float = 3.0
     rmp_difficulty: Optional[float] = None
@@ -957,6 +961,14 @@ def resolve_must_haves(
         course_code = course_input.code or f"GE {course_input.category}"
         raw_sections = all_sections.get(course_code, [])
 
+        # Not offered this term. Planning mode skips the seat filter, so without
+        # this the empty list falls through to the "no lab fits" diagnosis.
+        if not raw_sections:
+            result.errors.append(
+                f"{course_code} isn't offered this term. Check the course code or pick a different term."
+            )
+            continue
+
         # Filter and pin
         filtered, error = filter_and_pin_sections(
             raw_sections, course_input, constraints, rmp_cap, planning_mode=planning_mode
@@ -1071,6 +1083,12 @@ def prepare_ge_pairs(
         candidates = [s for s in candidates if s.course.upper() == ge_input.ge_code.upper()]
         if not candidates:
             return [], f"No sections of {ge_input.ge_code} found for {ge_slot}."
+    elif not ge_input.section_id and "GESM" not in [ge_input.category, *(ge_input.categories or [])]:
+        # "Let the program choose": don't suggest a course the student may not
+        # be allowed into. GESM 1xx counts toward A-F but is freshmen-only, so
+        # sophomores were being handed seminars they can't register for. Anyone
+        # who wants one can still ask: a specific class, or the GESM category.
+        candidates = [s for s in candidates if not s.enrollment_limited]
 
     filtered, error = filter_and_pin_sections(
         candidates,

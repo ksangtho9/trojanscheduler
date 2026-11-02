@@ -22,6 +22,7 @@ from solver import (
     expand_to_pairs,
     resolve_must_haves,
     filter_and_pin_sections,
+    prepare_ge_pairs,
 )
 
 
@@ -590,6 +591,61 @@ def test_online_and_tba_only_courses_keep_their_sections():
     assert [s.section_id for s in got] == ["r1"], got
 
 
+
+# ---------------------------------------------------------------------------
+# Auto-picked GE must not suggest courses the student may not be allowed into
+# (GESM 120 counts toward GE B but is freshmen-only; a sophomore got it)
+# ---------------------------------------------------------------------------
+
+def _ge_pool():
+    gesm = make_section("GESM 120", "g1", ["Mon"], "10:00", "11:50", rmp_score=5.0)
+    gesm.enrollment_limited = True
+    gesm.ge_categories = ["B", "GESM"]
+    open_course = make_section("PHIL 101", "p1", ["Tue"], "10:00", "11:50", rmp_score=3.0)
+    open_course.ge_categories = ["B"]
+    return [gesm, open_course]
+
+
+def _ge_pick(ge_input):
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    ranked, err = prepare_ge_pairs(_ge_pool(), cons, "Category B", ge_input=ge_input, planning_mode=True)
+    assert err is None, err
+    return {p.lecture.course for p in ranked}
+
+
+def test_auto_ge_skips_enrollment_limited_courses():
+    assert _ge_pick(CourseInput(input_type="ge", category="B")) == {"PHIL 101"}
+
+
+def test_limited_course_is_kept_when_asked_for():
+    assert _ge_pick(CourseInput(input_type="ge", category="B", ge_code="GESM 120")) == {"GESM 120"}
+    assert "GESM 120" in _ge_pick(CourseInput(input_type="ge", category="GESM"))
+
+
+def test_auto_ge_alternatives_never_include_limited_courses():
+    sections = {"EE 355": [make_section("EE 355", "e1", ["Wed"], "10:00", "11:50")]}
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    result = build_schedules(
+        must_have_inputs=[CourseInput(input_type="course", code="EE 355")],
+        ge_inputs=[CourseInput(input_type="ge", category="B")],
+        nice_to_have_inputs=[],
+        all_sections=sections,
+        ge_candidates={"Category B": _ge_pool()},
+        constraints=cons,
+        planning_mode=True,
+    )
+    assert result["schedules"], result["error"]
+    assert "GESM" not in str(result["schedules"]), "GESM must not be picked or offered as a swap"
+
+
+
+def test_course_not_offered_this_term_says_so():
+    cons = base_constraints(earliest_start="08:00", latest_end="20:00")
+    for planning in (False, True):
+        res = resolve_must_haves([CourseInput(input_type="course", code="EE 355")], {"EE 355": []}, cons, planning_mode=planning)
+        assert res.errors and "isn't offered this term" in res.errors[0], (planning, res.errors)
+
+
 TESTS = [
     test_planning_mode_returns_schedules_despite_tight_time_window,
     test_planning_mode_returns_schedules_despite_days_off,
@@ -615,6 +671,10 @@ TESTS = [
     test_tba_lab_is_not_picked_over_a_timed_lab,
     test_pinned_tba_section_is_still_allowed,
     test_online_and_tba_only_courses_keep_their_sections,
+    test_auto_ge_skips_enrollment_limited_courses,
+    test_limited_course_is_kept_when_asked_for,
+    test_auto_ge_alternatives_never_include_limited_courses,
+    test_course_not_offered_this_term_says_so,
 ]
 
 

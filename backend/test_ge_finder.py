@@ -17,6 +17,7 @@ from ge_finder import (
     CATEGORY_PREFIX_MAP,
     build_ge_candidates,
     fetch_ge_course_codes,
+    is_enrollment_limited,
     warm_ge_departments,
 )
 from scraper import clear_dept_cache
@@ -159,6 +160,26 @@ def test_category_map_is_not_term_dependent():
     assert not hasattr(ge_finder, "TERM_CODE"), "ge_finder must not hold a term constant"
 
 
+def _rule(code):
+    return {"groupCode": code, "restrictionCode": "I", "restriction": "Inclusive"}
+
+
+def test_enrollment_limits_read_from_usc_restrictions():
+    # GESM 110: freshmen only
+    assert is_enrollment_limited({"courseRestrictions": [_rule("U1")]})
+    # SOCI 242: juniors and seniors only
+    assert is_enrollment_limited({"courseRestrictions": [_rule("U3"), _rule("U4")]})
+    # ACAD 181: one school only
+    assert is_enrollment_limited({"schoolRestrictions": [_rule("ACAD")]})
+    assert is_enrollment_limited({"majorRestrictions": [_rule("CHEM")]})
+    # BUAD 310 lists every level, which limits nobody
+    assert not is_enrollment_limited({"courseRestrictions": [_rule(c) for c in ("U1", "U2", "U3", "U4")]})
+    # "Not open to X" leaves it open to most students
+    assert not is_enrollment_limited({"courseRestrictions": [{"groupCode": "U1", "restrictionCode": "E"}]})
+    assert not is_enrollment_limited({"courseRestrictions": None, "majorRestrictions": None, "schoolRestrictions": None})
+    assert not is_enrollment_limited(None)
+
+
 TESTS = [
     test_ge_course_codes_request_the_given_term,
     test_ge_candidates_are_isolated_per_term,
@@ -168,6 +189,7 @@ TESTS = [
     test_empty_category_list_short_circuits,
     test_unknown_category_is_ignored,
     test_category_map_is_not_term_dependent,
+    test_enrollment_limits_read_from_usc_restrictions,
 ]
 
 

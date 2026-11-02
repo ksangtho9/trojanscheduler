@@ -70,6 +70,30 @@ def _normalize_cat(cat: str) -> str:
     return c if c in CATEGORY_PREFIX_MAP else c
 
 
+ALL_CLASS_LEVELS = {"U1", "U2", "U3", "U4"}  # Freshman through Senior
+
+
+def is_enrollment_limited(course: dict | None) -> bool:
+    """
+    True if USC only opens this course to certain students: some class levels
+    (GESM 1xx is freshmen-only, SOCI 242 juniors and seniors), or a major or
+    school (ACAD 181 is Iovine and Young Academy only).
+
+    Only "Inclusive" rules count. A "not open to X" rule leaves most students
+    able to enroll. A course listing all four levels (BUAD 310) is open to all.
+    """
+    if not course:
+        return False
+
+    def inclusive(key: str) -> list[dict]:
+        return [r for r in (course.get(key) or []) if r.get("restrictionCode") == "I"]
+
+    levels = {r.get("groupCode") for r in inclusive("courseRestrictions")}
+    if levels and not ALL_CLASS_LEVELS <= levels:
+        return True
+    return bool(inclusive("majorRestrictions") or inclusive("schoolRestrictions"))
+
+
 async def _fetch_ge_codes_from_usc(
     req_prefix: str, cat_prefix: str, client: httpx.AsyncClient, term_code: str
 ) -> list[str]:
@@ -267,6 +291,9 @@ async def build_ge_candidates(
       - ge_categories (list[str])  → all categories that course satisfies
                                      (a course in multiple GE lists gets all of them,
                                       which feeds is_double_count in the solver).
+      - enrollment_limited (bool)  → USC limits it by class level, major or school,
+                                     so the solver won't auto-pick it (see solver
+                                     prepare_ge_pairs).
 
     Implementation:
       1. Hit the official GE endpoint per requested category to get course codes.
@@ -356,9 +383,11 @@ async def build_ge_candidates(
             cats_for_code = sorted(code_to_cats.get(code, set()))
             if not cats_for_code:
                 continue
+            limited = is_enrollment_limited(_ge_course_objects.get(term_code, {}).get(code))
             for section in sections:
                 section["course_code"] = code
                 section["ge_categories"] = cats_for_code
+                section["enrollment_limited"] = limited
                 sid = section.get("section_id", "")
                 for cat in cats_for_code:
                     slot = f"Category {cat}"
